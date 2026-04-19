@@ -1,6 +1,6 @@
 {
-  "name": "Pennylane Deployment Manager\t",
-  "description": "Convert FEC files to Pennylane-compatible Excel files with custom formatting.",
+  "name": "FEC to Pennylane Converter",
+  "description": "Convert FEC files to Pennylane Excel format. Features batch processing, anomaly detection, and PDF/OCR balance reconciliation.",
   "requestFramePermissions": [],
   "majorCapabilities": []
 }

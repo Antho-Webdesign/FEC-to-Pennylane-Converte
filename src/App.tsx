@@ -639,6 +639,7 @@ export default function App() {
   const [balRawText, setBalRawText] = useState('');
   const [normLevel, setNormLevel] = useState<'full' | '3' | '6'>('full');
   const [selectedNorm, setSelectedNorm] = useState<string | null>(null);
+  const [sidePanelSearch, setSidePanelSearch] = useState('');
   const [lastSuccessfulBal, setLastSuccessfulBal] = useState<{ name: string, soldes: Record<string, { lib: string, solde: number }> } | null>(null);
   const [pdfRetryWithOcr, setPdfRetryWithOcr] = useState<File | null>(null);
 
@@ -2536,13 +2537,13 @@ export default function App() {
           </div>
 
           {/* --- Actions de l'étape 4 --- */}
-          <div className="flex justify-between items-center">
-            <button className="flex items-center gap-2 text-slate-600 hover:text-slate-900 px-4 py-2 font-medium" onClick={() => setStep(3)}>
+          <div className="flex justify-between items-center mt-6">
+            <button className="flex items-center gap-2 text-slate-600 hover:text-slate-900 px-4 py-2 font-medium transition-colors" onClick={() => setStep(3)}>
               <ArrowLeft className="w-4 h-4" /> Retour à l'export
             </button>
-            {balanceFile && (
+            {fileNameBal && (
               <button 
-                className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white px-6 py-3 rounded-xl font-semibold shadow-sm transition-colors"
+                className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white px-6 py-3 rounded-xl font-semibold shadow-sm transition-all active:scale-95"
                 onClick={exportBalanceXLSX}
               >
                 <Download className="w-5 h-5" /> Télécharger Excel (.xlsx)
@@ -2550,7 +2551,6 @@ export default function App() {
             )}
           </div>
 
-          {/* --- Panneau latéral des détails FEC --- */}
           <AnimatePresence>
             {selectedNorm && (
               <>
@@ -2558,7 +2558,7 @@ export default function App() {
                   initial={{ opacity: 0 }}
                   animate={{ opacity: 1 }}
                   exit={{ opacity: 0 }}
-                  onClick={() => setSelectedNorm(null)}
+                  onClick={() => { setSelectedNorm(null); setSidePanelSearch(''); }}
                   className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-40"
                 />
                 <motion.div 
@@ -2568,95 +2568,162 @@ export default function App() {
                   transition={{ type: 'spring', damping: 25, stiffness: 200 }}
                   className="fixed top-0 right-0 h-full w-full max-w-2xl bg-white shadow-2xl z-50 flex flex-col border-l border-slate-200"
                 >
-                  <div className="p-6 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
-                    <div>
-                      <h3 className="text-lg font-bold text-slate-900 flex items-center gap-3">
-                        <FileText className="w-5 h-5 text-indigo-500" />
-                        Détail des écritures FEC
-                      </h3>
-                      <p className="text-sm text-slate-500 mt-1">
-                        Regroupement : <span className="font-mono font-bold text-indigo-600">{selectedNorm}</span>
-                      </p>
+                  <div className="p-6 border-b border-slate-100 flex flex-col gap-4 bg-slate-50/50">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <h3 className="text-lg font-bold text-slate-900 flex items-center gap-3">
+                          <FileText className="w-5 h-5 text-indigo-500" />
+                          Détail des écritures FEC
+                        </h3>
+                        <p className="text-sm text-slate-500 mt-1">
+                          Regroupement : <span className="font-mono font-bold text-indigo-600">{selectedNorm}</span>
+                        </p>
+                      </div>
+                      <button 
+                        onClick={() => { setSelectedNorm(null); setSidePanelSearch(''); }}
+                        className="p-2 hover:bg-slate-200 rounded-full text-slate-400 hover:text-slate-600 transition-colors"
+                      >
+                        <X className="w-6 h-6" />
+                      </button>
                     </div>
-                    <button 
-                      onClick={() => setSelectedNorm(null)}
-                      className="p-2 hover:bg-slate-200 rounded-full text-slate-400 hover:text-slate-600 transition-colors"
-                    >
-                      <X className="w-6 h-6" />
-                    </button>
+
+                    <div className="relative">
+                      <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                      <input 
+                        type="text"
+                        placeholder="Rechercher une écriture, un montant ou un libellé..."
+                        className="w-full pl-10 pr-4 py-2 bg-white border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-indigo-500 outline-none transition-all shadow-sm"
+                        value={sidePanelSearch}
+                        onChange={e => setSidePanelSearch(e.target.value)}
+                      />
+                    </div>
                   </div>
 
-                  <div className="flex-1 overflow-y-auto p-6">
+                  <div className="flex-1 overflow-y-auto p-6 bg-slate-50/30">
                     <div className="space-y-4">
-                      {transformed
-                        .filter(r => {
-                          const normalizeAccount = (acc: string) => {
-                            if (normLevel === 'full') return acc;
-                            return acc.substring(0, parseInt(normLevel));
-                          };
-                          return normalizeAccount(r.CompteNum) === selectedNorm;
-                        })
-                        .map((r, i) => (
-                          <div key={i} className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm hover:border-indigo-300 transition-colors">
+                      {(() => {
+                        const normalizeAccount = (acc: string) => {
+                          if (normLevel === 'full') return acc;
+                          return acc.substring(0, parseInt(normLevel));
+                        };
+
+                        const filtered = transformed.filter(r => {
+                          const matchesNorm = normalizeAccount(r.CompteNum) === selectedNorm;
+                          if (!matchesNorm) return false;
+                          
+                          if (!sidePanelSearch.trim()) return true;
+                          const q = sidePanelSearch.toLowerCase();
+                          return (
+                            (r.EcritureLib || '').toLowerCase().includes(q) ||
+                            (r.CompteLib || '').toLowerCase().includes(q) ||
+                            (r.CompteNum || '').includes(q) ||
+                            (r.EcritureNum || '').toString().includes(q) ||
+                            r.Debit.toString().includes(q) ||
+                            r.Credit.toString().includes(q)
+                          );
+                        });
+
+                        if (filtered.length === 0) {
+                          return (
+                            <div className="flex flex-col items-center justify-center py-20 text-slate-400 italic">
+                              <Search className="w-12 h-12 opacity-10 mb-4" />
+                              <p>Aucune écriture ne correspond à votre recherche.</p>
+                            </div>
+                          );
+                        }
+
+                        return filtered.map((r, i) => (
+                          <div key={i} className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm hover:border-indigo-300 transition-colors group">
                             <div className="flex justify-between items-start mb-3">
-                              <div>
-                                <span className="text-[10px] font-bold text-indigo-500 uppercase tracking-widest bg-indigo-50 px-2 py-0.5 rounded">
-                                  {r.JournalCode} — {r.JournalLib}
-                                </span>
-                                <div className="text-sm font-bold text-slate-800 mt-1">{r.EcritureLib}</div>
+                              <div className="space-y-1">
+                                <div className="flex items-center gap-2">
+                                  <span className="text-[10px] font-black text-indigo-600 uppercase tracking-widest bg-indigo-50 px-2 py-0.5 rounded border border-indigo-100">
+                                    {r.JournalCode}
+                                  </span>
+                                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">
+                                    {r.JournalLib}
+                                  </span>
+                                </div>
+                                <div className="text-sm font-bold text-slate-800 leading-tight group-hover:text-indigo-900 transition-colors">
+                                  {r.EcritureLib}
+                                </div>
                               </div>
                               <div className="text-right">
-                                <div className="text-xs font-mono text-slate-400">N° {r.EcritureNum}</div>
-                                <div className="text-xs font-bold text-slate-500 mt-1">{r.EcritureDate}</div>
+                                <div className="text-[10px] font-mono font-bold text-slate-400 bg-slate-50 px-2 py-0.5 rounded">N° {r.EcritureNum}</div>
+                                <div className="text-[10px] font-black text-slate-500 mt-1 uppercase tracking-tighter">{r.EcritureDate}</div>
                               </div>
                             </div>
                             
-                            <div className="flex items-center justify-between border-t border-slate-50 pt-3">
-                              <div className="flex items-center gap-3 text-xs">
-                                <span className="font-mono font-bold text-slate-700 bg-slate-100 px-2 py-0.5 rounded">
+                            <div className="flex items-center justify-between border-t border-slate-100 pt-3">
+                              <div className="flex items-center gap-2 text-xs">
+                                <span className="font-mono font-black text-slate-700 bg-slate-100 px-2 py-0.5 rounded shadow-inner">
                                   {r.CompteNum}
                                 </span>
-                                <span className="text-slate-500 italic max-w-[200px] truncate">{r.CompteLib}</span>
+                                <span className="text-slate-500 italic max-w-[220px] truncate">{r.CompteLib}</span>
                               </div>
                               <div className="flex gap-4 font-mono text-sm tabular-nums">
-                                {r.Debit > 0 && <span className="text-emerald-600 font-bold">D: {fmt2(r.Debit)}</span>}
-                                {r.Credit > 0 && <span className="text-amber-600 font-bold">C: {fmt2(r.Credit)}</span>}
+                                {r.Debit > 0 && (
+                                  <div className="flex flex-col items-end">
+                                    <span className="text-[9px] font-black text-emerald-600 uppercase tracking-tighter">Débit</span>
+                                    <span className="text-emerald-700 font-black">{fmt2(r.Debit)}</span>
+                                  </div>
+                                )}
+                                {r.Credit > 0 && (
+                                  <div className="flex flex-col items-end">
+                                    <span className="text-[9px] font-black text-amber-600 uppercase tracking-tighter">Crédit</span>
+                                    <span className="text-amber-700 font-black">{fmt2(r.Credit)}</span>
+                                  </div>
+                                )}
                               </div>
                             </div>
                           </div>
-                      ))}
+                        ));
+                      })()}
                     </div>
                   </div>
 
-                  <div className="p-6 bg-slate-50 border-t border-slate-100">
+                  <div className="p-6 bg-white border-t border-slate-200 shadow-[0_-4px_20px_-5px_rgba(0,0,0,0.1)]">
                     <div className="flex justify-between items-center">
-                      <div className="text-xs text-slate-400 font-bold uppercase tracking-widest">
-                        Total sélection
-                      </div>
-                      <div className="flex gap-4">
-                        <div className="text-right">
-                          <div className="text-[10px] text-slate-400 uppercase font-black tracking-tighter">Débit</div>
-                          <div className="text-lg font-black text-slate-800 tabular-nums">
-                            {fmt2(transformed.filter(r => {
-                              const normalizeAccount = (acc: string) => {
-                                if (normLevel === 'full') return acc;
-                                return acc.substring(0, parseInt(normLevel));
-                              };
-                              return normalizeAccount(r.CompteNum) === selectedNorm;
-                            }).reduce((s, r) => s + (r.Debit || 0), 0))} €
-                          </div>
+                      <div className="space-y-1">
+                        <div className="text-[10px] text-slate-400 font-black uppercase tracking-widest">
+                          Résumé du groupe
                         </div>
-                        <div className="text-right">
-                          <div className="text-[10px] text-slate-400 uppercase font-black tracking-tighter">Crédit</div>
-                          <div className="text-lg font-black text-slate-800 tabular-nums">
+                        <div className="text-[10px] font-bold text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded border border-indigo-100 inline-block font-sans">
+                          {(() => {
+                            const normalizeAccount = (acc: string) => {
+                              if (normLevel === 'full') return acc;
+                              return acc.substring(0, parseInt(normLevel));
+                            };
+                            return transformed.filter(r => normalizeAccount(r.CompteNum) === selectedNorm).length;
+                          })()} écritures au total
+                        </div>
+                      </div>
+                      <div className="flex gap-6">
+                        <div className="text-right relative">
+                          <div className="text-[9px] text-emerald-500 uppercase font-black tracking-widest mb-1">Total Débit</div>
+                          <div className="text-xl font-black text-slate-900 tabular-nums leading-none">
                             {fmt2(transformed.filter(r => {
                               const normalizeAccount = (acc: string) => {
                                 if (normLevel === 'full') return acc;
                                 return acc.substring(0, parseInt(normLevel));
                               };
                               return normalizeAccount(r.CompteNum) === selectedNorm;
-                            }).reduce((s, r) => s + (r.Credit || 0), 0))} €
+                            }).reduce((s, r) => s + (r.Debit || 0), 0))} <span className="text-xs font-bold text-slate-400">€</span>
                           </div>
+                          <div className="absolute -bottom-1 left-0 right-0 h-0.5 bg-emerald-500/20 rounded-full" />
+                        </div>
+                        <div className="text-right relative">
+                          <div className="text-[9px] text-amber-500 uppercase font-black tracking-widest mb-1">Total Crédit</div>
+                          <div className="text-xl font-black text-slate-900 tabular-nums leading-none">
+                            {fmt2(transformed.filter(r => {
+                              const normalizeAccount = (acc: string) => {
+                                if (normLevel === 'full') return acc;
+                                return acc.substring(0, parseInt(normLevel));
+                              };
+                              return normalizeAccount(r.CompteNum) === selectedNorm;
+                            }).reduce((s, r) => s + (r.Credit || 0), 0))} <span className="text-xs font-bold text-slate-400">€</span>
+                          </div>
+                          <div className="absolute -bottom-1 left-0 right-0 h-0.5 bg-amber-500/20 rounded-full" />
                         </div>
                       </div>
                     </div>
