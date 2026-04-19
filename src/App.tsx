@@ -7,7 +7,8 @@ import * as pdfjsLib from 'pdfjs-dist';
 import pdfWorker from 'pdfjs-dist/build/pdf.worker.min.js?url';
 import Tesseract from 'tesseract.js';
 import JSZip from 'jszip';
-import { Upload, FileSpreadsheet, Settings, ArrowRight, ArrowLeft, Download, RefreshCw, AlertCircle, AlertTriangle, CheckCircle2, Scale, Lock, Sun, Moon, Search, ArrowUpDown, ArrowUp, ArrowDown, Save, Trash2, ListFilter, Check, ScanText, Files, FileText, X } from 'lucide-react';
+import { AnimatePresence, motion } from 'motion/react';
+import { Upload, FileSpreadsheet, Settings, ArrowRight, ArrowLeft, Download, RefreshCw, AlertCircle, AlertTriangle, CheckCircle2, Scale, Lock, Sun, Moon, Search, ArrowUpDown, ArrowUp, ArrowDown, Save, Trash2, ListFilter, Check, ScanText, Files, FileText, X, Filter, FileSearch, Layers, Eye, EyeOff, ExternalLink, History } from 'lucide-react';
 
 // Configuration du worker PDF.js pour la lecture de documents PDF
 pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorker;
@@ -171,23 +172,20 @@ function normDate(s: string) {
  * Parse un montant (chaîne ou nombre) en un nombre décimal valide.
  * Gère différents formats (ex: "1 234,56", "1.234,56", "1234.56").
  */
-function parseAmt(s: any) {
-  if (s === null || s === undefined) return 0;
+function parseAmt(s: any): number {
+  if (s === null || s === undefined || s === '') return NaN;
   if (typeof s === 'number') return s;
   let t = String(s).trim().replace(/\s/g, '').replace(/\u00A0/g, '');
   if (t.includes('.') && t.includes(',')) {
     const lastDot = t.lastIndexOf('.');
     const lastComma = t.lastIndexOf(',');
-    if (lastComma > lastDot) {
-      t = t.replace(/\./g, '').replace(',', '.');
-    } else {
-      t = t.replace(/,/g, '');
-    }
+    if (lastComma > lastDot) t = t.replace(/\./g, '').replace(',', '.');
+    else t = t.replace(/,/g, '');
   } else if (t.includes(',')) {
     t = t.replace(',', '.');
   }
   const n = parseFloat(t.replace(/[^\d.\-]/g, ''));
-  return isNaN(n) ? 0 : n;
+  return n;
 }
 
 /**
@@ -199,6 +197,24 @@ function isTotalRow(row: Record<string, string>, mapping: Record<string, string>
   const lib = (row[mapping.EcritureLib] || '').toLowerCase();
   const totPat = /\btotal\b|\breport\b|à nouveau|\ban\b/;
   return (cNum === '' && totPat.test(lib)) || /\btotal\b/i.test(cNum);
+}
+
+/**
+ * Formate une feuille Excel pour l'export Pennylane.
+ */
+function formatExcelSheet(ws: XLSX.WorkSheet, dateFormat: string, numberFormat: string) {
+  ws['!cols'] = [14, 22, 16, 14, 14, 30, 18, 14, 40, 16, 16].map(w => ({ wch: w }));
+  const range = XLSX.utils.decode_range(ws['!ref'] || 'A1:K1');
+  for (let R = range.s.r + 1; R <= range.e.r; ++R) {
+    const dEc = ws[XLSX.utils.encode_cell({ r: R, c: 3 })]; // Date Écriture (D)
+    const dPi = ws[XLSX.utils.encode_cell({ r: R, c: 7 })]; // Date Pièce (H)
+    const deb = ws[XLSX.utils.encode_cell({ r: R, c: 9 })]; // Débit (J)
+    const cre = ws[XLSX.utils.encode_cell({ r: R, c: 10 })]; // Crédit (K)
+    if (dEc && (dEc.t === 'd' || dEc.t === 'n')) dEc.z = dateFormat;
+    if (dPi && (dPi.t === 'd' || dPi.t === 'n')) dPi.z = dateFormat;
+    if (deb && deb.t === 'n') deb.z = numberFormat;
+    if (cre && cre.t === 'n') cre.z = numberFormat;
+  }
 }
 
 /**
@@ -247,11 +263,14 @@ function transformRows(rows: any[], mapping: Record<string, string>, fmt: string
       if (fmt === 'A') {
         const ds = mapping.Debit !== '__ignore__' ? mapping.Debit : null;
         const cs = mapping.Credit !== '__ignore__' ? mapping.Credit : null;
-        let d = ds ? parseAmt(row[ds]) : 0;
-        let c = cs ? parseAmt(row[cs]) : 0;
+        const rawD = ds ? parseAmt(row[ds]) : 0;
+        const rawC = cs ? parseAmt(row[cs]) : 0;
         
-        if (ds && isNaN(parseAmt(row[ds])) && row[ds]) logs.push({ line: index+2, type: 'amt', msg: `Montant débit invalide : "${row[ds]}"` });
-        if (cs && isNaN(parseAmt(row[cs])) && row[cs]) logs.push({ line: index+2, type: 'amt', msg: `Montant crédit invalide : "${row[cs]}"` });
+        let d = isNaN(rawD) ? 0 : rawD;
+        let c = isNaN(rawC) ? 0 : rawC;
+
+        if (ds && isNaN(rawD) && row[ds]) logs.push({ line: index+2, type: 'amt', msg: `Montant débit invalide : "${row[ds]}"` });
+        if (cs && isNaN(rawC) && row[cs]) logs.push({ line: index+2, type: 'amt', msg: `Montant crédit invalide : "${row[cs]}"` });
 
         // Gestion des montants négatifs dans les colonnes séparées
         if (d < 0) { c += Math.abs(d); d = 0; }
@@ -262,10 +281,11 @@ function transformRows(rows: any[], mapping: Record<string, string>, fmt: string
       } else if (fmt === 'B') {
         const ms = mapping.Montant !== '__ignore__' ? mapping.Montant : null;
         const ss = mapping.Sens !== '__ignore__' ? mapping.Sens : null;
-        let amt = ms ? parseAmt(row[ms]) : 0;
+        const rawAmt = ms ? parseAmt(row[ms]) : 0;
+        let amt = isNaN(rawAmt) ? 0 : rawAmt;
         let sens = ss ? (row[ss] || '').trim().toUpperCase() : 'D';
         
-        if (ms && isNaN(parseAmt(row[ms])) && row[ms]) logs.push({ line: index+2, type: 'amt', msg: `Montant invalide : "${row[ms]}"` });
+        if (ms && isNaN(rawAmt) && row[ms]) logs.push({ line: index+2, type: 'amt', msg: `Montant invalide : "${row[ms]}"` });
 
         // Si le montant est négatif, on inverse le sens
         if (amt < 0) {
@@ -277,13 +297,15 @@ function transformRows(rows: any[], mapping: Record<string, string>, fmt: string
         out.Credit = ['C', 'CREDIT', 'CRÉDIT'].includes(sens) ? amt : 0;
       } else if (fmt === 'C_pos_debit') {
         const ms = mapping.Montant !== '__ignore__' ? mapping.Montant : null;
-        const amt = ms ? parseAmt(row[ms]) : 0;
-        if (ms && isNaN(parseAmt(row[ms])) && row[ms]) logs.push({ line: index+2, type: 'amt', msg: `Montant invalide : "${row[ms]}"` });
+        const rawAmt = ms ? parseAmt(row[ms]) : 0;
+        const amt = isNaN(rawAmt) ? 0 : rawAmt;
+        if (ms && isNaN(rawAmt) && row[ms]) logs.push({ line: index+2, type: 'amt', msg: `Montant invalide : "${row[ms]}"` });
         out.Debit = Math.max(0, amt); out.Credit = Math.max(0, -amt);
       } else if (fmt === 'C_pos_credit') {
         const ms = mapping.Montant !== '__ignore__' ? mapping.Montant : null;
-        const amt = ms ? parseAmt(row[ms]) : 0;
-        if (ms && isNaN(parseAmt(row[ms])) && row[ms]) logs.push({ line: index+2, type: 'amt', msg: `Montant invalide : "${row[ms]}"` });
+        const rawAmt = ms ? parseAmt(row[ms]) : 0;
+        const amt = isNaN(rawAmt) ? 0 : rawAmt;
+        if (ms && isNaN(rawAmt) && row[ms]) logs.push({ line: index+2, type: 'amt', msg: `Montant invalide : "${row[ms]}"` });
         out.Credit = Math.max(0, amt); out.Debit = Math.max(0, -amt);
       }
       return out;
@@ -476,25 +498,33 @@ async function parseBalanceFile(file: File, useOcr = false, onProgress?: (p: num
     const text = await extractTextFromPDF(file, useOcr, onProgress);
     const lines = text.split('\n');
     lines.forEach(line => {
-      // Expression régulière plus flexible pour capturer : [Compte] [Libellé] [Montants...]
-      // On cherche un début de ligne qui ressemble à un compte comptable (3 à 15 caractères alphanumériques commençant par 1-9)
-      const match = line.trim().match(/^([1-9][0-9a-zA-Z]{2,14})\s+(.*?)\s+([\d\s.,\-]+)$/);
-      if (match) {
-        const acc = match[1];
-        const lib = match[2].trim();
-        const numsStr = match[3].trim();
+      const trimLine = line.trim();
+      if (!trimLine) return;
+
+      // Recherche d'un numéro de compte (3 à 15 chiffres)
+      const accMatch = trimLine.match(/^([0-9]{3,15})\s+(.*)/);
+      if (accMatch) {
+        const acc = accMatch[1];
+        const rest = accMatch[2].trim();
         
-        // Extraction de tous les blocs numériques (montants débiteurs, créditeurs, soldes)
-        const numMatches = numsStr.match(/(?:^|\s)-?[\d\s]+[.,]\d+|(?:\s|^)-?\d+/g);
-        if (numMatches) {
-          const nums = numMatches.map(v => parseAmt(v)).filter(n => !isNaN(n));
+        // On cherche les montants en fin de ligne (plusieurs colonnes possibles : Débit, Crédit, Solde)
+        // On extrait tous les blocs numériques identifiables
+        const numBlocks = rest.match(/((?:^|\s)-?[\d\s]+[.,]\d+|(?:\s|^)-?\d+)/g);
+        
+        if (numBlocks && numBlocks.length > 0) {
+          // Le libellé est ce qui reste entre le compte et les nombres
+          const lastNumBlock = numBlocks[numBlocks.length - 1];
+          const lib = rest.slice(0, rest.lastIndexOf(lastNumBlock)).trim();
+          
+          const nums = numBlocks.map(v => parseAmt(v)).filter(n => !isNaN(n));
           if (nums.length > 0) {
             let solde = 0;
-            if (nums.length >= 2) {
-              solde = nums[0] - nums[1];
-            } else if (nums.length === 1) {
-              solde = nums[0];
-            }
+            // Si on a plusieurs nombres (ex: Débit, Crédit, Solde), on prend souvent le dernier pour le solde
+            // ou on calcule (Deb - Cred) si on en a au moins 2. 
+            // Pour être universel, si on a >= 2 colonnes on fait (Col1 - Col2). Si 1, c'est le solde direct.
+            if (nums.length >= 2) solde = nums[0] - nums[1];
+            else solde = nums[0];
+            
             balSoldes[acc] = { lib, solde };
           }
         }
@@ -581,10 +611,14 @@ export default function App() {
     multipleLibs: { compte: string, variants: { lib: string, lines: number[] }[] }[],
     invalidAccounts: { compte: string, reason: string, lines: number[] }[]
   } | null>(null);
+  const [anomalyTypeFilter, setAnomalyTypeFilter] = useState<'all' | 'invalid' | 'multiple'>('all');
+  const [anomalySearch, setAnomalySearch] = useState('');
+  const [anomalySort, setAnomalySort] = useState<'asc' | 'desc'>('asc');
 
   // --- Presets de mapping ---
   const [presets, setPresets] = useState<{ name: string, mapping: Record<string, string>, amtFmt: string }[]>([]);
   const [newPresetName, setNewPresetName] = useState('');
+  const [activePreset, setActivePreset] = useState<string | null>(null);
 
   // --- Mode Batch ---
   const [batchFiles, setBatchFiles] = useState<File[]>([]);
@@ -593,12 +627,19 @@ export default function App() {
 
   // --- Vérification de la balance ---
   const [balanceFile, setBalanceFile] = useState<File | null>(null);
-  const [comparisonData, setComparisonData] = useState<any[]>([]);
+  const [balSoldes, setBalSoldes] = useState<Record<string, { lib: string, solde: number }>>({});
   const [loadingBal, setLoadingBal] = useState(false);
   const [balProgress, setBalProgress] = useState(0);
   const [useOcr, setUseOcr] = useState(false);
   const [balanceTolerance, setBalanceTolerance] = useState(0.01);
   const [errBal, setErrBal] = useState('');
+  const [fileNameBal, setFileNameBal] = useState('');
+  const [balFilter, setBalFilter] = useState<'all' | 'errors' | 'missing-fec' | 'missing-bal'>('all');
+  const [showBalRaw, setShowBalRaw] = useState(false);
+  const [balRawText, setBalRawText] = useState('');
+  const [normLevel, setNormLevel] = useState<'full' | '3' | '6'>('full');
+  const [selectedNorm, setSelectedNorm] = useState<string | null>(null);
+  const [lastSuccessfulBal, setLastSuccessfulBal] = useState<{ name: string, soldes: Record<string, { lib: string, solde: number }> } | null>(null);
 
   // --- Références DOM ---
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -644,9 +685,24 @@ export default function App() {
       const defaultExportName = f.name.replace(/\.[^.]+$/, '') + '_pennylane';
       setExportFileName(defaultExportName);
       
-      const initialMap = autoMap(headers);
-      setMapping(initialMap);
-      setAmtFmt(det(initialMap, signConv) || 'A');
+      // Si un profil de mapping est actif, on l'applique
+      const presetToApply = presets.find(p => p.name === activePreset);
+      if (presetToApply) {
+        const filteredMap: Record<string, string> = {};
+        Object.entries(presetToApply.mapping).forEach(([k, v]) => {
+          if (headers.includes(v as string) || v === '__ignore__') {
+            filteredMap[k] = v as string;
+          }
+        });
+        setMapping(filteredMap);
+        setAmtFmt(presetToApply.amtFmt);
+        if (presetToApply.amtFmt.startsWith('C_')) setSignConv(presetToApply.amtFmt);
+      } else {
+        const initialMap = autoMap(headers);
+        setMapping(initialMap);
+        setAmtFmt(det(initialMap, signConv) || 'A');
+      }
+
       setErr('');
     } catch (e: any) {
       setErr(e.message || 'Erreur inconnue lors de la lecture du fichier FEC.');
@@ -805,25 +861,7 @@ export default function App() {
     }));
     
     const ws = XLSX.utils.json_to_sheet(data, { cellDates: true });
-    
-    // Apply column widths
-    ws['!cols'] = [14, 22, 16, 14, 14, 30, 18, 14, 40, 16, 16].map(w => ({ wch: w }));
-    
-    // Apply number formatting to Debit (J) and Credit (K) columns
-    // Apply date formatting to Date Écriture (D) and Date Pièce (H) columns
-    const range = XLSX.utils.decode_range(ws['!ref'] || 'A1:K1');
-    for (let R = range.s.r + 1; R <= range.e.r; ++R) {
-      const dateEcritureCell = ws[XLSX.utils.encode_cell({ r: R, c: 3 })]; // D
-      const datePieceCell = ws[XLSX.utils.encode_cell({ r: R, c: 7 })]; // H
-      const debitCell = ws[XLSX.utils.encode_cell({ r: R, c: 9 })]; // J
-      const creditCell = ws[XLSX.utils.encode_cell({ r: R, c: 10 })]; // K
-      
-      if (dateEcritureCell && (dateEcritureCell.t === 'd' || dateEcritureCell.t === 'n')) dateEcritureCell.z = dateFormat;
-      if (datePieceCell && (datePieceCell.t === 'd' || datePieceCell.t === 'n')) datePieceCell.z = dateFormat;
-      if (debitCell && debitCell.t === 'n') debitCell.z = numberFormat;
-      if (creditCell && creditCell.t === 'n') creditCell.z = numberFormat;
-    }
-
+    formatExcelSheet(ws, dateFormat, numberFormat);
     XLSX.utils.book_append_sheet(wb, ws, 'Écritures');
 
     const journaux = Array.from(new Set(transformed.map(r => r.JournalCode || '(vide)')));
@@ -877,16 +915,7 @@ export default function App() {
       }));
       
       const ws = XLSX.utils.json_to_sheet(data, { cellDates: true });
-      ws['!cols'] = [14, 22, 16, 14, 14, 30, 18, 14, 40, 16, 16].map(w => ({ wch: w }));
-      
-      const range = XLSX.utils.decode_range(ws['!ref'] || 'A1:K1');
-      for (let R = range.s.r + 1; R <= range.e.r; ++R) {
-        if (ws[XLSX.utils.encode_cell({r:R, c:3})]) ws[XLSX.utils.encode_cell({r:R, c:3})].z = dateFormat;
-        if (ws[XLSX.utils.encode_cell({r:R, c:7})]) ws[XLSX.utils.encode_cell({r:R, c:7})].z = dateFormat;
-        if (ws[XLSX.utils.encode_cell({r:R, c:9})]) ws[XLSX.utils.encode_cell({r:R, c:9})].z = numberFormat;
-        if (ws[XLSX.utils.encode_cell({r:R, c:10})]) ws[XLSX.utils.encode_cell({r:R, c:10})].z = numberFormat;
-      }
-      
+      formatExcelSheet(ws, dateFormat, numberFormat);
       XLSX.utils.book_append_sheet(wb, ws, 'Écritures');
       const excelBuffer = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
       zip.file(`${res.name.replace(/\.[^.]+$/, '')}_pennylane.xlsx`, excelBuffer);
@@ -969,14 +998,60 @@ export default function App() {
   };
 
   /**
+   * Exporte le résumé du traitement batch au format CSV.
+   */
+  const exportBatchSummary = () => {
+    if (batchResults.length === 0) return;
+    
+    let csv = "Nom du fichier;Lignes;Total Débit;Total Crédit;Statut;Détail Erreur\n";
+    batchResults.forEach(res => {
+      const status = res.error ? "Erreur" : "Succès";
+      const errorMsg = res.error ? `"${res.error.replace(/"/g, '""')}"` : "";
+      csv += `"${res.name}";${res.rows};${res.debit.toFixed(2)};${res.credit.toFixed(2)};${status};${errorMsg}\n`;
+    });
+    
+    const blob = new Blob(["\ufeff" + csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.setAttribute("href", url);
+    link.setAttribute("download", `rapport_batch_${new Date().toISOString().split('T')[0]}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  /**
    * Réinitialise complètement l'application pour traiter un nouveau fichier.
    */
   const reset = () => {
     setStep(1); setFile(null); setFileName(''); setRawData(null);
     setMapping({}); setTransformed([]); setErr(''); setExportFileName('');
-    setBalanceFile(null); setComparisonData([]); setErrBal('');
+    setBalanceFile(null); setBalSoldes({}); setErrBal('');
     setAccountAnomalies(null);
   };
+
+  /**
+   * Filtre et trie les anomalies de comptes pour l'affichage.
+   */
+  const filteredAnomalies = React.useMemo(() => {
+    if (!accountAnomalies) return { invalid: [], multiple: [] };
+
+    const filterBySearch = (compte: string) => 
+      !anomalySearch || compte.toLowerCase().includes(anomalySearch.toLowerCase());
+
+    const sortFn = (a: { compte: string }, b: { compte: string }) => {
+      const cmp = a.compte.localeCompare(b.compte, undefined, { numeric: true });
+      return anomalySort === 'asc' ? cmp : -cmp;
+    };
+
+    let invalid = accountAnomalies.invalidAccounts.filter(a => filterBySearch(a.compte)).sort(sortFn);
+    let multiple = accountAnomalies.multipleLibs.filter(a => filterBySearch(a.compte)).sort(sortFn);
+
+    if (anomalyTypeFilter === 'invalid') multiple = [];
+    if (anomalyTypeFilter === 'multiple') invalid = [];
+
+    return { invalid, multiple };
+  }, [accountAnomalies, anomalyTypeFilter, anomalySearch, anomalySort]);
 
   /**
    * Gère le téléchargement et l'analyse du fichier de balance (PDF/Excel/CSV).
@@ -986,67 +1061,106 @@ export default function App() {
     setLoadingBal(true);
     setBalProgress(0);
     setErrBal('');
+    setBalRawText('');
     try {
-      const balSoldes = await parseBalanceFile(f, useOcr, (p) => setBalProgress(Math.round(p)));
-      
-      const normalizeAccount = (acc: string) => {
-        let normalized = acc.replace(/0+$/, '');
-        if (normalized.length < 3 && acc.length >= 3) {
-          normalized = acc.substring(0, 3);
-        }
-        return normalized;
-      };
-
-      const grouped: Record<string, { 
-        comptesFec: Set<string>, 
-        comptesBal: Set<string>, 
-        libs: Set<string>, 
-        soldeFec: number, 
-        soldeBal: number 
-      }> = {};
-
-      transformed.forEach(r => {
-        const acc = r.CompteNum;
-        const norm = normalizeAccount(acc);
-        if (!grouped[norm]) {
-          grouped[norm] = { comptesFec: new Set(), comptesBal: new Set(), libs: new Set(), soldeFec: 0, soldeBal: 0 };
-        }
-        grouped[norm].comptesFec.add(acc);
-        if (r.CompteLib) grouped[norm].libs.add(r.CompteLib);
-        grouped[norm].soldeFec += (r.Debit || 0) - (r.Credit || 0);
-      });
-
-      Object.entries(balSoldes).forEach(([acc, data]) => {
-        const norm = normalizeAccount(acc);
-        if (!grouped[norm]) {
-          grouped[norm] = { comptesFec: new Set(), comptesBal: new Set(), libs: new Set(), soldeFec: 0, soldeBal: 0 };
-        }
-        grouped[norm].comptesBal.add(acc);
-        if (data.lib) grouped[norm].libs.add(data.lib);
-        grouped[norm].soldeBal += data.solde;
-      });
-
-      const compData = Object.keys(grouped).sort().map(norm => {
-        const g = grouped[norm];
-        const allComptes = Array.from(new Set([...g.comptesFec, ...g.comptesBal])).sort();
-        const diff = g.soldeFec - g.soldeBal;
-        return {
-          compte: allComptes.join(' / '),
-          lib: Array.from(g.libs).join(' / '),
-          soldeFec: g.soldeFec,
-          soldeBal: g.soldeBal,
-          ecart: diff
-        };
-      });
-
-      setComparisonData(compData);
+      if (f.name.toLowerCase().endsWith('.pdf')) {
+        const text = await extractTextFromPDF(f, useOcr, (p) => setBalProgress(Math.round(p)));
+        setBalRawText(text);
+      }
+      const extractedSoldes = await parseBalanceFile(f, useOcr, (p) => setBalProgress(Math.round(p)));
+      setBalSoldes(extractedSoldes);
       setBalanceFile(f);
+      setFileNameBal(f.name);
+      
+      // Sauvegarde pour réutilisation future
+      const balData = { name: f.name, soldes: extractedSoldes };
+      setLastSuccessfulBal(balData);
+      localStorage.setItem('fec_last_balance', JSON.stringify(balData));
     } catch (e: any) {
       setErrBal(e.message || 'Erreur inconnue lors de la lecture de la balance.');
     } finally {
       setLoadingBal(false);
     }
   };
+
+  /**
+   * Réutilise la dernière balance sauvegardée.
+   */
+  const handleReuseLastBalance = () => {
+    if (lastSuccessfulBal) {
+      setBalSoldes(lastSuccessfulBal.soldes);
+      setFileNameBal(lastSuccessfulBal.name);
+      // On ne met pas de balanceFile car on n'a plus l'objet File réel
+    }
+  };
+
+  /**
+   * Calcule les données de comparaison entre le FEC et la balance.
+   */
+  const comparisonData = React.useMemo(() => {
+    if (Object.keys(balSoldes).length === 0) return [];
+
+    const normalizeAccount = (acc: string) => {
+      if (normLevel === 'full') return acc;
+      return acc.substring(0, parseInt(normLevel));
+    };
+
+    const grouped: Record<string, { 
+      comptesFec: Set<string>, 
+      comptesBal: Set<string>, 
+      libs: Set<string>, 
+      soldeFec: number, 
+      soldeBal: number 
+    }> = {};
+
+    transformed.forEach(r => {
+      const acc = r.CompteNum;
+      const norm = normalizeAccount(acc);
+      if (!grouped[norm]) {
+        grouped[norm] = { comptesFec: new Set(), comptesBal: new Set(), libs: new Set(), soldeFec: 0, soldeBal: 0 };
+      }
+      grouped[norm].comptesFec.add(acc);
+      if (r.CompteLib) grouped[norm].libs.add(r.CompteLib);
+      grouped[norm].soldeFec += (r.Debit || 0) - (r.Credit || 0);
+    });
+
+    Object.entries(balSoldes).forEach(([acc, data]) => {
+      const norm = normalizeAccount(acc);
+      if (!grouped[norm]) {
+        grouped[norm] = { comptesFec: new Set(), comptesBal: new Set(), libs: new Set(), soldeFec: 0, soldeBal: 0 };
+      }
+      grouped[norm].comptesBal.add(acc);
+      const d = data as { lib: string, solde: number };
+      if (d.lib) grouped[norm].libs.add(d.lib);
+      grouped[norm].soldeBal += d.solde;
+    });
+
+    let entries = Object.keys(grouped).sort().map(norm => {
+      const g = grouped[norm];
+      const allComptes = Array.from(new Set([...g.comptesFec, ...g.comptesBal])).sort();
+      const diff = g.soldeFec - g.soldeBal;
+      return {
+        norm,
+        compte: allComptes.join(' / '),
+        lib: Array.from(g.libs).join(' / '),
+        soldeFec: g.soldeFec,
+        soldeBal: g.soldeBal,
+        ecart: diff,
+        hasFec: g.comptesFec.size > 0,
+        hasBal: g.comptesBal.size > 0
+      };
+    });
+
+    if (balFilter === 'errors') {
+      entries = entries.filter(r => Math.abs(r.ecart) > balanceTolerance);
+    } else if (balFilter === 'missing-bal') {
+      entries = entries.filter(r => r.hasFec && !r.hasBal);
+    } else if (balFilter === 'missing-fec') {
+      entries = entries.filter(r => !r.hasFec && r.hasBal);
+    }
+
+    return entries;
+  }, [transformed, balSoldes, balanceFile, normLevel, balFilter, balanceTolerance]);
 
   /**
    * Gère la soumission du formulaire de connexion.
@@ -1100,14 +1214,30 @@ export default function App() {
     return sortableItems;
   }, [transformed, sortConfig, searchQuery]);
 
+  const totals = React.useMemo(() => {
+    return transformed.reduce((acc, r) => ({
+      debit: acc.debit + (r.Debit || 0),
+      credit: acc.credit + (r.Credit || 0)
+    }), { debit: 0, credit: 0 });
+  }, [transformed]);
+
   // --- Gestion des Presets de Mapping ---
   useEffect(() => {
-    const saved = localStorage.getItem('fec_mapping_presets');
-    if (saved) {
+    const savedMapping = localStorage.getItem('fec_mapping_presets');
+    if (savedMapping) {
       try {
-        setPresets(JSON.parse(saved));
+        setPresets(JSON.parse(savedMapping));
       } catch (e) {
         console.error("Erreur lors du chargement des presets", e);
+      }
+    }
+
+    const savedBal = localStorage.getItem('fec_last_balance');
+    if (savedBal) {
+      try {
+        setLastSuccessfulBal(JSON.parse(savedBal));
+      } catch (e) {
+        console.error("Erreur lors du chargement de la dernière balance", e);
       }
     }
   }, []);
@@ -1126,7 +1256,8 @@ export default function App() {
     localStorage.setItem('fec_mapping_presets', JSON.stringify(newPresets));
   };
 
-  const applyPreset = (p: { mapping: Record<string, string>, amtFmt: string }) => {
+  const applyPreset = (p: { name: string, mapping: Record<string, string>, amtFmt: string }) => {
+    setActivePreset(p.name);
     if (!rawData) return;
     const filteredMap: Record<string, string> = {};
     Object.entries(p.mapping).forEach(([k, v]) => {
@@ -1283,19 +1414,45 @@ export default function App() {
               )}
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-6">
-              <div className="flex flex-col gap-1.5">
-                <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Encodage</label>
-                <select className="p-2.5 border border-slate-300 rounded-lg bg-slate-50 focus:border-amber-500 focus:ring-1 focus:ring-amber-500 outline-none" value={encOpt} onChange={(e) => { setEncOpt(e.target.value); if (file) handleFile(file, e.target.value, sepOpt); }}>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mt-6">
+              <div className="bg-slate-50 p-4 rounded-xl border border-slate-200">
+                <div className="flex items-center gap-2 mb-3">
+                  <Settings className="w-4 h-4 text-slate-400" />
+                  <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Profil de mapping</span>
+                </div>
+                <select 
+                  className="w-full bg-white border border-slate-200 rounded-lg p-2 text-sm font-bold text-slate-700 focus:ring-2 focus:ring-indigo-500 outline-none"
+                  value={activePreset || ''}
+                  onChange={(e) => setActivePreset(e.target.value || null)}
+                >
+                  <option value="">Automatique (IA)</option>
+                  {presets.map(p => (
+                    <option key={p.name} value={p.name}>{p.name}</option>
+                  ))}
+                </select>
+                <p className="text-[10px] text-slate-400 mt-2 italic font-serif">
+                  {activePreset ? `Le profil "${activePreset}" sera appliqué.` : "L'IA détectera les colonnes."}
+                </p>
+              </div>
+
+              <div className="flex flex-col gap-1.5 bg-slate-50 p-4 rounded-xl border border-slate-200">
+                <div className="flex items-center gap-2 mb-1.5">
+                  <Lock className="w-4 h-4 text-slate-400" />
+                  <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Encodage</span>
+                </div>
+                <select className="w-full bg-white border border-slate-200 rounded-lg p-2 text-sm font-bold text-slate-700 outline-none" value={encOpt} onChange={(e) => { setEncOpt(e.target.value); if (file) handleFile(file, e.target.value, sepOpt); }}>
                   <option value="auto">Détection automatique</option>
                   <option value="utf-8">UTF-8</option>
                   <option value="iso-8859-1">Latin-1 (ANSI)</option>
                   <option value="utf-8-sig">UTF-8 BOM</option>
                 </select>
               </div>
-              <div className="flex flex-col gap-1.5">
-                <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Séparateur</label>
-                <select className="p-2.5 border border-slate-300 rounded-lg bg-slate-50 focus:border-amber-500 focus:ring-1 focus:ring-amber-500 outline-none" value={sepOpt} onChange={(e) => { setSepOpt(e.target.value); if (file) handleFile(file, encOpt, e.target.value); }}>
+              <div className="flex flex-col gap-1.5 bg-slate-50 p-4 rounded-xl border border-slate-200">
+                <div className="flex items-center gap-2 mb-1.5">
+                  <RefreshCw className="w-4 h-4 text-slate-400" />
+                  <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Séparateur</span>
+                </div>
+                <select className="w-full bg-white border border-slate-200 rounded-lg p-2 text-sm font-bold text-slate-700 outline-none" value={sepOpt} onChange={(e) => { setSepOpt(e.target.value); if (file) handleFile(file, encOpt, e.target.value); }}>
                   <option value="auto">Détection automatique</option>
                   <option value="\t">Tabulation</option>
                   <option value=";">Point-virgule</option>
@@ -1355,54 +1512,67 @@ export default function App() {
           )}
 
           {/* --- Presets de mapping --- */}
-          <div className="bg-amber-50 border border-amber-200 rounded-xl p-6 mb-4 shadow-sm">
-            <h2 className="text-sm font-semibold text-amber-800 uppercase tracking-wider mb-4 flex items-center gap-2">
-              <Settings className="w-4 h-4" /> Presets de mapping
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 mb-4 shadow-2xl relative overflow-hidden">
+            <div className="absolute top-0 right-0 p-4 opacity-10 pointer-events-none">
+              <Settings className="w-24 h-24 text-white" />
+            </div>
+            
+            <h2 className="text-[10px] font-black text-indigo-400 uppercase tracking-[0.2em] mb-6 flex items-center gap-3">
+              <Layers className="w-4 h-4" /> Profils de Configuration
             </h2>
             
             {presets.length > 0 && (
-              <div className="mb-6">
-                <label className="block text-xs font-semibold text-amber-700 mb-2">Charger un preset existant :</label>
-                <div className="flex flex-wrap gap-2">
+              <div className="mb-8">
+                <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-3">Profils sauvegardés :</label>
+                <div className="flex flex-wrap gap-3">
                   {presets.map((p, idx) => (
-                    <div key={idx} className="flex items-center bg-white border border-amber-300 rounded-lg overflow-hidden shadow-sm">
+                    <div key={idx} className={`flex items-center rounded-xl overflow-hidden shadow-lg transition-all border ${activePreset === p.name ? 'border-indigo-500 ring-2 ring-indigo-500/20' : 'border-slate-700'}`}>
                       <button 
                         onClick={() => applyPreset(p)}
-                        className="px-3 py-1.5 text-sm font-medium text-amber-900 hover:bg-amber-100 transition-colors"
+                        className={`px-4 py-2 text-xs font-black transition-colors ${activePreset === p.name ? 'bg-indigo-600 text-white' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'}`}
                       >
                         {p.name}
                       </button>
                       <button 
                         onClick={() => deletePreset(idx)}
-                        className="px-2 py-1.5 bg-amber-50 text-amber-500 hover:text-red-500 transition-colors border-l border-amber-200"
-                        title="Supprimer ce preset"
+                        className="px-3 py-2 bg-slate-800 text-slate-500 hover:text-red-400 hover:bg-red-500/10 transition-colors border-l border-slate-700"
+                        title="Supprimer"
                       >
                         <Trash2 className="w-3.5 h-3.5" />
                       </button>
                     </div>
                   ))}
+                  <button 
+                    onClick={() => setActivePreset(null)}
+                    className={`px-4 py-2 text-xs font-black rounded-xl border transition-all ${!activePreset ? 'bg-slate-700 border-slate-600 text-white' : 'bg-transparent border-slate-700 text-slate-500 hover:text-slate-300'}`}
+                  >
+                    Réinit. IA
+                  </button>
                 </div>
               </div>
             )}
 
-            <div className="flex flex-col sm:flex-row items-end gap-3">
-              <div className="flex-1 w-full">
-                <label className="block text-xs font-semibold text-amber-700 mb-1.5 text-left">Sauvegarder le mapping actuel :</label>
+            <div className="bg-slate-800/50 p-5 rounded-xl border border-slate-700/50">
+              <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-3">Enregistrer le profil actuel :</label>
+              <div className="flex gap-2">
                 <input 
                   type="text" 
-                  placeholder="Nom du preset (ex: Sage 1000, Quadratus...)"
-                  className="w-full px-4 py-2 bg-white border border-amber-300 rounded-lg outline-none focus:ring-2 focus:ring-amber-500 text-sm"
+                  placeholder="Nom du profil (ex: Sage 1000, Pennylane...)" 
+                  className="flex-1 bg-slate-950 border border-slate-700 rounded-lg px-4 py-2 text-sm text-white placeholder:text-slate-600 focus:ring-2 focus:ring-indigo-500 outline-none font-medium"
                   value={newPresetName}
-                  onChange={e => setNewPresetName(e.target.value)}
+                  onChange={(e) => setNewPresetName(e.target.value)}
                 />
+                <button 
+                  onClick={savePreset}
+                  disabled={!newPresetName.trim()}
+                  className="bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white px-6 py-2 rounded-lg text-xs font-black uppercase tracking-widest transition-all shadow-lg active:scale-95 flex items-center gap-2"
+                >
+                  <Save className="w-4 h-4" /> Sauvegarder
+                </button>
               </div>
-              <button 
-                onClick={savePreset}
-                disabled={!newPresetName.trim()}
-                className="flex items-center gap-2 bg-amber-600 hover:bg-amber-700 disabled:bg-slate-300 text-white px-4 py-2 rounded-lg font-medium transition-colors shadow-sm"
-              >
-                <Save className="w-4 h-4" /> Enregistrer
-              </button>
+              <p className="text-[10px] text-slate-500 mt-3 italic font-serif opacity-60">
+                Sauvegarde les colonnes mappées et le format de montant détecté.
+              </p>
             </div>
           </div>
 
@@ -1551,17 +1721,25 @@ export default function App() {
                   </div>
                   <div>
                     <h4 className="text-sm font-bold text-indigo-900">Exportation groupée</h4>
-                    <p className="text-xs text-indigo-700 mt-1">Générez une archive ZIP contenant tous les fichiers convertis.</p>
+                    <p className="text-xs text-indigo-700 mt-1">Générez une archive ZIP des documents convertis ou un rapport CSV.</p>
                   </div>
                 </div>
-                <button 
-                  onClick={downloadBatchZIP}
-                  disabled={loading}
-                  className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-2.5 rounded-xl font-bold shadow-lg transition-all active:scale-95 disabled:bg-indigo-300"
-                >
-                  {loading ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Files className="w-5 h-5" />}
-                  Télécharger le ZIP (.zip)
-                </button>
+                <div className="flex items-center gap-3">
+                  <button 
+                    onClick={exportBatchSummary}
+                    className="flex items-center gap-2 bg-white text-indigo-700 hover:bg-slate-50 border border-indigo-200 px-5 py-2.5 rounded-xl font-bold shadow-sm transition-all active:scale-95"
+                  >
+                    <FileText className="w-4 h-4" /> Rapport (.csv)
+                  </button>
+                  <button 
+                    onClick={downloadBatchZIP}
+                    disabled={loading}
+                    className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-2.5 rounded-xl font-bold shadow-lg transition-all active:scale-95 disabled:bg-indigo-300"
+                  >
+                    {loading ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Files className="w-5 h-5" />}
+                    Télécharger le ZIP (.zip)
+                  </button>
+                </div>
               </div>
               
               <div className="mt-8 pt-8 border-t border-slate-100 flex justify-center">
@@ -1581,18 +1759,18 @@ export default function App() {
                 </div>
                 <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm">
                   <div className="text-xs text-slate-500 mb-1">Total Débit</div>
-                  <div className="text-xl font-semibold font-mono text-slate-800">{fmt2(transformed.reduce((s, r) => s + r.Debit, 0))} €</div>
+                  <div className="text-xl font-semibold font-mono text-slate-800">{fmt2(totals.debit)} €</div>
                 </div>
                 <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm">
                   <div className="text-xs text-slate-500 mb-1">Total Crédit</div>
-                  <div className="text-xl font-semibold font-mono text-slate-800">{fmt2(transformed.reduce((s, r) => s + r.Credit, 0))} €</div>
+                  <div className="text-xl font-semibold font-mono text-slate-800">{fmt2(totals.credit)} €</div>
                 </div>
-                <div className={`border rounded-xl p-4 shadow-sm ${Math.abs(transformed.reduce((s, r) => s + r.Debit, 0) - transformed.reduce((s, r) => s + r.Credit, 0)) < 0.01 ? 'bg-emerald-50 border-emerald-200' : 'bg-red-50 border-red-200'}`}>
-                  <div className={`text-xs mb-1 ${Math.abs(transformed.reduce((s, r) => s + r.Debit, 0) - transformed.reduce((s, r) => s + r.Credit, 0)) < 0.01 ? 'text-emerald-700' : 'text-red-700'}`}>
-                    {Math.abs(transformed.reduce((s, r) => s + r.Debit, 0) - transformed.reduce((s, r) => s + r.Credit, 0)) < 0.01 ? 'Fichier équilibré' : 'Déséquilibre détecté'}
+                <div className={`border rounded-xl p-4 shadow-sm ${Math.abs(totals.debit - totals.credit) < 0.01 ? 'bg-emerald-50 border-emerald-200' : 'bg-red-50 border-red-200'}`}>
+                  <div className={`text-xs mb-1 ${Math.abs(totals.debit - totals.credit) < 0.01 ? 'text-emerald-700' : 'text-red-700'}`}>
+                    {Math.abs(totals.debit - totals.credit) < 0.01 ? 'Fichier équilibré' : 'Déséquilibre détecté'}
                   </div>
-                  <div className={`text-xl font-semibold font-mono ${Math.abs(transformed.reduce((s, r) => s + r.Debit, 0) - transformed.reduce((s, r) => s + r.Credit, 0)) < 0.01 ? 'text-emerald-800' : 'text-red-800'}`}>
-                    {fmt2(Math.abs(transformed.reduce((s, r) => s + r.Debit, 0) - transformed.reduce((s, r) => s + r.Credit, 0)))} €
+                  <div className={`text-xl font-semibold font-mono ${Math.abs(totals.debit - totals.credit) < 0.01 ? 'text-emerald-800' : 'text-red-800'}`}>
+                    {fmt2(Math.abs(totals.debit - totals.credit))} €
                   </div>
                 </div>
               </div>
@@ -1648,79 +1826,130 @@ export default function App() {
           {/* --- Affichage des anomalies de comptes --- */}
           {accountAnomalies && (accountAnomalies.multipleLibs.length > 0 || accountAnomalies.invalidAccounts.length > 0) ? (
             <div className="bg-red-50 border border-red-200 rounded-xl p-6 mb-6 shadow-sm">
-              <div className="flex items-start gap-3">
-                <AlertCircle className="w-6 h-6 text-red-600 shrink-0 mt-0.5" />
+              <div className="flex items-start gap-4">
+                <div className="p-2 bg-red-100 rounded-lg shrink-0">
+                  <AlertCircle className="w-6 h-6 text-red-600" />
+                </div>
                 <div className="flex-1">
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-4">
+                  <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4 mb-6">
                     <div>
-                      <h3 className="text-base font-semibold text-red-800 mb-0.5">
-                        Anomalies détectées dans les comptes
+                      <h3 className="text-base font-bold text-red-900 mb-1 flex items-center gap-2">
+                        Anomalies de Plan Comptable
+                        <span className="text-[10px] bg-red-200 text-red-700 px-2 py-0.5 rounded-full uppercase tracking-widest font-black">
+                          {accountAnomalies.invalidAccounts.length + accountAnomalies.multipleLibs.length} alertes
+                        </span>
                       </h3>
-                      <p className="text-sm text-red-700">
-                        Des problèmes ont été détectés dans les numéros ou libellés de compte. 
+                      <p className="text-sm text-red-700 opacity-80 max-w-xl">
+                        Des incohérences ont été détectées. Ces comptes seront exportés tels quels, mais une vérification est fortement recommandée.
                       </p>
                     </div>
                     <button 
                       onClick={exportAnomaliesCSV}
-                      className="flex items-center gap-2 bg-white text-red-600 hover:bg-red-50 px-3 py-1.5 rounded-lg text-sm font-bold border border-red-200 transition-colors shadow-sm shrink-0"
+                      className="flex items-center gap-2 bg-white text-red-700 hover:bg-red-50 px-4 py-2 rounded-xl text-xs font-black uppercase tracking-widest border border-red-200 transition-all shadow-sm shrink-0 active:scale-95"
                     >
-                      <Download className="w-4 h-4" /> Exporter la liste (.csv)
+                      <Download className="w-4 h-4" /> Exporter (.csv)
+                    </button>
+                  </div>
+
+                  {/* Barre de Filtres */}
+                  <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 mb-4">
+                    <div className="sm:col-span-2 relative">
+                      <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-red-400" />
+                      <input 
+                        type="text" 
+                        placeholder="Rechercher un compte..." 
+                        className="w-full pl-9 pr-4 py-2 bg-white border border-red-200 rounded-xl text-sm text-red-900 placeholder:text-red-300 focus:ring-2 focus:ring-red-500 outline-none transition-all"
+                        value={anomalySearch}
+                        onChange={(e) => setAnomalySearch(e.target.value)}
+                      />
+                    </div>
+                    <div>
+                      <select 
+                        className="w-full px-3 py-2 bg-white border border-red-200 rounded-xl text-sm text-red-900 font-bold focus:ring-2 focus:ring-red-500 outline-none"
+                        value={anomalyTypeFilter}
+                        onChange={(e) => setAnomalyTypeFilter(e.target.value as any)}
+                      >
+                        <option value="all">Tous les types</option>
+                        <option value="invalid">Invalides uniquement</option>
+                        <option value="multiple">Doublons de libellés</option>
+                      </select>
+                    </div>
+                    <button 
+                      onClick={() => setAnomalySort(prev => prev === 'asc' ? 'desc' : 'asc')}
+                      className="flex items-center justify-between px-4 py-2 bg-white border border-red-200 rounded-xl text-sm text-red-700 font-bold hover:bg-red-50 transition-colors"
+                    >
+                      <span>Compte</span>
+                      {anomalySort === 'asc' ? <ArrowUp className="w-4 h-4" /> : <ArrowDown className="w-4 h-4" />}
                     </button>
                   </div>
                   
-                  <div className="max-h-80 overflow-y-auto bg-white rounded-lg border border-red-100 p-4 space-y-6">
+                  <div className="max-h-80 overflow-y-auto bg-white/50 backdrop-blur-sm rounded-2xl border border-red-100 p-1 space-y-1">
                     
-                    {accountAnomalies.invalidAccounts.length > 0 && (
-                      <div>
-                        <h4 className="text-sm font-semibold text-slate-800 mb-3 flex items-center gap-2">
-                          <span className="w-2 h-2 rounded-full bg-red-500"></span>
-                          Numéros de compte invalides ({accountAnomalies.invalidAccounts.length})
-                        </h4>
-                        <ul className="space-y-3">
-                          {accountAnomalies.invalidAccounts.map((anomaly, idx) => (
-                            <li key={idx} className="text-sm border-l-2 border-red-200 pl-3">
-                              <div className="flex items-center gap-2 mb-1">
-                                <span className="font-mono font-semibold text-slate-800 bg-slate-100 px-2 py-0.5 rounded">
-                                  {anomaly.compte || '(vide)'}
-                                </span>
-                                <span className="text-red-600 font-medium">{anomaly.reason}</span>
-                              </div>
-                              <div className="text-slate-500 text-xs">
-                                Lignes source : {anomaly.lines.slice(0, 10).join(', ')}
-                                {anomaly.lines.length > 10 && ` et ${anomaly.lines.length - 10} autres`}
-                              </div>
-                            </li>
-                          ))}
-                        </ul>
+                    {filteredAnomalies.invalid.length === 0 && filteredAnomalies.multiple.length === 0 && (
+                      <div className="p-10 text-center">
+                        <FileSearch className="w-10 h-10 text-red-200 mx-auto mb-2" />
+                        <p className="text-sm font-medium text-red-400">Aucune anomalie ne correspond à vos filtres.</p>
+                        <button 
+                          onClick={() => { setAnomalySearch(''); setAnomalyTypeFilter('all'); }}
+                          className="text-xs font-bold text-red-600 mt-2 hover:underline"
+                        >
+                          Réinitialiser les filtres
+                        </button>
                       </div>
                     )}
 
-                    {accountAnomalies.multipleLibs.length > 0 && (
-                      <div>
-                        <h4 className="text-sm font-semibold text-slate-800 mb-3 flex items-center gap-2">
-                          <span className="w-2 h-2 rounded-full bg-amber-500"></span>
-                          Libellés multiples pour un même compte ({accountAnomalies.multipleLibs.length})
+                    {filteredAnomalies.invalid.length > 0 && (
+                      <div className="p-4">
+                        <h4 className="text-[10px] font-black text-red-900/40 uppercase tracking-[0.2em] mb-4 flex items-center gap-2">
+                          <AlertTriangle className="w-3.5 h-3.5" /> Numéros Invalides
                         </h4>
-                        <ul className="space-y-4">
-                          {accountAnomalies.multipleLibs.map((anomaly, idx) => (
-                            <li key={idx} className="text-sm border-l-2 border-amber-200 pl-3">
-                              <span className="font-mono font-semibold text-slate-800 bg-slate-100 px-2 py-0.5 rounded mb-2 inline-block">
-                                {anomaly.compte}
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                          {filteredAnomalies.invalid.map((anomaly, idx) => (
+                            <div key={idx} className="bg-white p-3 rounded-xl border border-red-100 shadow-sm group hover:border-red-300 transition-all">
+                              <div className="flex items-center justify-between gap-2 mb-2">
+                                <span className="font-mono text-sm font-black text-slate-800 bg-red-50 px-2 py-1 rounded-lg border border-red-100">
+                                  {anomaly.compte || '(vide)'}
+                                </span>
+                                <span className="text-[10px] font-black text-red-600 bg-red-50 px-2 py-0.5 rounded-full uppercase">
+                                  {anomaly.reason}
+                                </span>
+                              </div>
+                              <div className="text-[10px] text-slate-400 font-medium">
+                                Lignes : {anomaly.lines.slice(0, 8).join(', ')}
+                                {anomaly.lines.length > 8 && ` +${anomaly.lines.length - 8}`}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {filteredAnomalies.multiple.length > 0 && (
+                      <div className="p-4 border-t border-red-100/50">
+                        <h4 className="text-[10px] font-black text-amber-900/40 uppercase tracking-[0.2em] mb-4 flex items-center gap-2">
+                          <Layers className="w-3.5 h-3.5" /> Libellés Multiples
+                        </h4>
+                        <div className="space-y-3">
+                          {filteredAnomalies.multiple.map((anomaly, idx) => (
+                            <div key={idx} className="bg-white p-4 rounded-2xl border border-red-100 shadow-sm hover:border-amber-300 transition-all">
+                              <span className="font-mono text-xs font-black text-slate-800 bg-amber-50 px-3 py-1 rounded-lg border border-amber-100 mb-3 inline-block">
+                                Compte {anomaly.compte}
                               </span>
-                              <div className="space-y-2 mt-1">
+                              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
                                 {anomaly.variants.map((variant, i) => (
-                                  <div key={i} className="text-slate-600 bg-slate-50 p-2 rounded">
-                                    <div className="font-medium text-slate-700 mb-1">{variant.lib}</div>
-                                    <div className="text-slate-400 text-xs">
-                                      Lignes source : {variant.lines.slice(0, 5).join(', ')}
-                                      {variant.lines.length > 5 && ` et ${variant.lines.length - 5} autres`}
+                                  <div key={i} className="bg-slate-50 p-2.5 rounded-xl border border-slate-100">
+                                    <div className="font-bold text-slate-700 text-xs mb-1 line-clamp-1" title={variant.lib}>
+                                      {variant.lib}
+                                    </div>
+                                    <div className="text-[9px] text-slate-400 font-medium">
+                                      {variant.lines.length} occurrence(s)
                                     </div>
                                   </div>
                                 ))}
                               </div>
-                            </li>
+                            </div>
                           ))}
-                        </ul>
+                        </div>
                       </div>
                     )}
 
@@ -1895,125 +2124,364 @@ export default function App() {
       {step === 4 && (
         <div className="animate-in fade-in slide-in-from-bottom-4 duration-300">
           <div className="bg-white border border-slate-200 rounded-xl p-6 mb-4 shadow-sm">
-            <h2 className="text-sm font-semibold text-slate-500 uppercase tracking-wider mb-4 flex items-center gap-2">
-              ④ Contrôle de Balance
-            </h2>
-            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
-              <p className="text-sm text-slate-600">
-                Importez la balance de l'ancien logiciel (XLS, CSV, PDF) pour vérifier que les soldes correspondent aux écritures FEC générées.
-              </p>
+            <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 mb-6">
+              <div>
+                <h2 className="text-sm font-semibold text-slate-500 uppercase tracking-wider mb-1 flex items-center gap-2">
+                  ④ Contrôle de Balance
+                </h2>
+                <p className="text-sm text-slate-500">
+                  Comparez votre FEC avec une balance extraite de votre ancien logiciel.
+                </p>
+              </div>
               
-              <div className="flex flex-wrap items-center gap-4">
-                <div className="flex items-center gap-3 bg-slate-50 px-4 py-2 rounded-xl border border-slate-200">
-                  <label htmlFor="tolerance-input" className="text-xs font-semibold text-slate-500 uppercase tracking-wider whitespace-nowrap">Tolérance (€)</label>
+              <div className="flex flex-wrap items-center gap-3">
+                {/* Tolérance */}
+                <div className="flex items-center gap-2 bg-slate-50 px-3 py-1.5 rounded-lg border border-slate-200">
+                  <label htmlFor="tolerance-input" className="text-[10px] font-bold text-slate-500 uppercase tracking-wider whitespace-nowrap">Tolérance</label>
                   <input 
                     type="number" 
                     id="tolerance-input"
                     step="0.01"
                     min="0"
-                    className="w-16 bg-transparent border-none p-0 text-sm font-mono focus:ring-0 text-slate-700"
+                    className="w-14 bg-transparent border-none p-0 text-xs font-mono focus:ring-0 text-slate-700 font-bold"
                     value={balanceTolerance}
                     onChange={(e) => setBalanceTolerance(parseFloat(e.target.value) || 0)}
                   />
+                  <span className="text-slate-400 text-[10px] font-bold">€</span>
                 </div>
 
-                <div className="flex items-center gap-3 bg-indigo-50 px-4 py-2 rounded-xl border border-indigo-100">
+                {/* Normalisation */}
+                <div className="flex items-center gap-2 bg-slate-50 px-3 py-1.5 rounded-lg border border-slate-200">
+                  <Layers className="w-3.5 h-3.5 text-slate-400" />
+                  <select 
+                    className="bg-transparent border-none p-0 text-xs font-bold text-slate-600 focus:ring-0 outline-none cursor-pointer"
+                    value={normLevel}
+                    onChange={(e) => setNormLevel(e.target.value as any)}
+                  >
+                    <option value="full">Détail complet</option>
+                    <option value="3">Niveau 3 chiffres</option>
+                    <option value="6">Niveau 6 chiffres</option>
+                  </select>
+                </div>
+
+                <div className="flex items-center gap-3 bg-indigo-50 px-3 py-1.5 rounded-lg border border-indigo-100">
                   <input 
                     type="checkbox" 
                     id="ocr-toggle" 
-                    className="w-4 h-4 text-indigo-600 border-indigo-300 rounded focus:ring-indigo-500"
+                    className="w-3.5 h-3.5 text-indigo-600 border-indigo-300 rounded focus:ring-indigo-500"
                     checked={useOcr}
                     onChange={(e) => setUseOcr(e.target.checked)}
                   />
-                  <label htmlFor="ocr-toggle" className="text-xs font-semibold text-indigo-700 flex items-center gap-1.5 cursor-pointer select-none">
-                    <ScanText className="w-3.5 h-3.5" /> Activer l'OCR (pour scans)
+                  <label htmlFor="ocr-toggle" className="text-[10px] font-bold text-indigo-700 flex items-center gap-1.5 cursor-pointer select-none uppercase tracking-wider">
+                    <ScanText className="w-3.5 h-3.5" /> OCR
                   </label>
                 </div>
               </div>
             </div>
             
             {/* --- Zone de dépôt du fichier de balance --- */}
-            {!balanceFile ? (
-              <div 
-                className="border-2 border-dashed border-slate-300 rounded-xl p-10 text-center cursor-pointer hover:border-indigo-500 hover:bg-indigo-50 transition-colors bg-slate-50 relative overflow-hidden"
-                onClick={() => balInputRef.current?.click()}
-                onDragOver={(e) => e.preventDefault()}
-                onDrop={handleBalDrop}
-              >
-                <input type="file" ref={balInputRef} className="hidden" accept=".xls,.xlsx,.csv,.pdf" onChange={(e) => e.target.files?.[0] && handleBalanceCheck(e.target.files[0])} />
-                <Upload className="w-10 h-10 text-slate-400 mx-auto mb-3" />
-                <p className="text-slate-700 font-medium">
-                  <strong>Déposez votre fichier de Balance</strong> ou cliquez pour parcourir
-                </p>
-                <p className="text-sm text-slate-500 mt-1">Formats acceptés : .xls · .xlsx · .csv · .pdf</p>
-                {loadingBal && (
-                  <div className="absolute inset-0 bg-white/80 flex flex-col items-center justify-center p-6 animate-in fade-in duration-300">
-                    <RefreshCw className="w-8 h-8 text-indigo-600 animate-spin mb-4" />
-                    <div className="text-indigo-700 font-semibold mb-2">Analyse {useOcr ? 'OCR' : ''} en cours...</div>
-                    <div className="w-full max-w-xs bg-indigo-100 rounded-full h-2 mb-1">
-                      <div className="bg-indigo-600 h-2 rounded-full transition-all duration-300" style={{ width: `${balProgress}%` }}></div>
-                    </div>
-                    <div className="text-[10px] font-bold text-indigo-400 uppercase tracking-widest">{balProgress}%</div>
+            {Object.keys(balSoldes).length === 0 ? (
+              <div className="space-y-4">
+                <div 
+                  className="border-2 border-dashed border-slate-300 rounded-xl p-10 text-center cursor-pointer hover:border-indigo-500 hover:bg-indigo-50 transition-colors bg-slate-50 relative overflow-hidden"
+                  onClick={() => balInputRef.current?.click()}
+                  onDragOver={(e) => e.preventDefault()}
+                  onDrop={handleBalDrop}
+                >
+                  <input type="file" ref={balInputRef} className="hidden" accept=".xls,.xlsx,.csv,.pdf" onChange={(e) => e.target.files?.[0] && handleBalanceCheck(e.target.files[0])} />
+                  <div className="bg-white w-16 h-16 rounded-2xl flex items-center justify-center mx-auto mb-4 shadow-sm border border-slate-100">
+                    <Upload className="w-8 h-8 text-indigo-500" />
                   </div>
-                )}
-                {errBal && <div className="mt-4 p-3 bg-red-50 text-red-700 border-l-4 border-red-500 rounded-r-md flex items-center gap-2"><AlertCircle className="w-5 h-5" /> {errBal}</div>}
-              </div>
-            ) : (
-              <div>
-                {/* --- Résultats de la comparaison --- */}
-                <div className="flex items-center justify-between mb-4">
-                  <h3 className="font-semibold text-slate-800">Résultats de la comparaison</h3>
-                  <button onClick={() => setBalanceFile(null)} className="text-sm text-indigo-600 hover:text-indigo-800 font-medium">Changer de fichier</button>
+                  <p className="text-slate-700 font-bold text-lg mb-1">
+                    Déposez votre fichier de Balance
+                  </p>
+                  <p className="text-sm text-slate-500">Formats acceptés : PDF · Excel · CSV</p>
+                  {loadingBal && (
+                    <div className="absolute inset-0 bg-white/90 flex flex-col items-center justify-center p-6 animate-in fade-in duration-300 z-10">
+                      <div className="relative">
+                        <RefreshCw className="w-12 h-12 text-indigo-600 animate-spin mb-4" />
+                        {useOcr && <ScanText className="w-4 h-4 text-indigo-800 absolute -bottom-1 -right-1" />}
+                      </div>
+                      <div className="text-indigo-900 font-bold text-lg">Analyse {useOcr ? 'OCR' : ''} en cours...</div>
+                      <div className="text-indigo-500 text-sm mb-6">Extraction des lignes comptables</div>
+                      <div className="w-full max-w-xs bg-indigo-100 rounded-full h-3 mb-2 shadow-inner border border-indigo-200">
+                        <div className="bg-indigo-600 h-full rounded-full transition-all duration-300 shadow-md" style={{ width: `${balProgress}%` }}></div>
+                      </div>
+                      <div className="text-sm font-black text-indigo-700 tabular-nums">{balProgress}%</div>
+                    </div>
+                  )}
+                  {errBal && <div className="mt-4 p-4 bg-red-50 text-red-700 border border-red-200 rounded-xl flex items-center gap-3"><AlertCircle className="w-5 h-5" /> {errBal}</div>}
                 </div>
 
-                {/* --- Message global (succès ou erreur) --- */}
-                {comparisonData.some(r => Math.abs(r.ecart) > balanceTolerance) ? (
-                  <div className="p-4 bg-red-50 border border-red-200 rounded-lg mb-6 flex items-start gap-3">
-                    <AlertCircle className="w-5 h-5 text-red-600 mt-0.5" />
+                {lastSuccessfulBal && !loadingBal && (
+                  <button 
+                    onClick={handleReuseLastBalance}
+                    className="w-full bg-indigo-50 border border-indigo-100 hover:border-indigo-300 hover:bg-indigo-100/50 p-4 rounded-xl transition-all group flex items-center justify-between shadow-sm"
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className="bg-white p-2 rounded-lg shadow-sm border border-indigo-50 group-hover:scale-110 transition-transform">
+                        <History className="w-5 h-5 text-indigo-600" />
+                      </div>
+                      <div className="text-left">
+                        <p className="text-xs font-black text-indigo-900 uppercase tracking-widest mb-0.5">Réutiliser la dernière balance</p>
+                        <p className="text-xs text-indigo-600 font-medium opacity-70 italic">{lastSuccessfulBal.name}</p>
+                      </div>
+                    </div>
+                    <ArrowRight className="w-4 h-4 text-indigo-400 group-hover:translate-x-1 transition-transform" />
+                  </button>
+                )}
+              </div>
+            ) : (
+              <div className="animate-in fade-in duration-500">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6 bg-slate-50 p-4 rounded-xl border border-slate-200">
+                  <div className="flex items-center gap-3">
+                    <div className="bg-white p-2 rounded-lg shadow-sm">
+                      <FileSpreadsheet className="w-5 h-5 text-indigo-600" />
+                    </div>
                     <div>
-                      <h4 className="font-semibold text-red-800">Des écarts ont été détectés</h4>
-                      <p className="text-sm text-red-700 mt-1">L'écart absolu total est de {fmt2(comparisonData.reduce((sum, row) => sum + Math.abs(row.ecart), 0))} €. Vérifiez les comptes en rouge ci-dessous (Tolérance: {balanceTolerance} €).</p>
+                      <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Balance active</p>
+                      <p className="text-sm font-bold text-slate-700">{fileNameBal || 'Balance importée'}</p>
                     </div>
                   </div>
-                ) : (
-                  <div className="p-4 bg-emerald-50 border border-emerald-200 rounded-lg mb-6 flex items-start gap-3">
-                    <CheckCircle2 className="w-5 h-5 text-emerald-600 mt-0.5" />
-                    <div>
-                      <h4 className="font-semibold text-emerald-800">Balance parfaitement équilibrée</h4>
-                      <p className="text-sm text-emerald-700 mt-1">Tous les soldes du FEC correspondent à la balance importée (Tolérance: {balanceTolerance} €).</p>
+                  
+                  <div className="flex items-center gap-2">
+                    <button 
+                      onClick={() => { setBalanceFile(null); setBalSoldes({}); setBalRawText(''); setFileNameBal(''); }}
+                      className="text-xs text-red-600 hover:text-red-700 font-bold bg-white px-3 py-1.5 rounded-lg border border-red-100 hover:border-red-200 transition-all shadow-sm active:scale-95"
+                    >
+                      Détacher le fichier
+                    </button>
+                    <button 
+                      onClick={exportBalanceXLSX}
+                      className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-1.5 rounded-lg text-xs font-bold shadow-sm transition-all active:scale-95"
+                    >
+                      <Download className="w-4 h-4" /> Export Rapport
+                    </button>
+                  </div>
+                </div>
+
+                {/* --- Résultats de la comparaison --- */}
+                
+                {/* Dashboard Summary Cards */}
+                <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+                  <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 shadow-sm transition-all hover:shadow-md">
+                    <div className="flex items-center gap-2 text-slate-500 mb-2">
+                      <AlertTriangle className="w-4 h-4 text-amber-500" />
+                      <span className="text-[10px] font-bold uppercase tracking-wider">Écart Absolu</span>
+                    </div>
+                    <div className="text-2xl font-black font-mono text-slate-800">
+                      {fmt2(comparisonData.reduce((sum, row) => sum + Math.abs(row.ecart), 0))} €
+                    </div>
+                  </div>
+                  <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 shadow-sm">
+                    <div className="flex items-center gap-2 text-slate-500 mb-2">
+                       <CheckCircle2 className="w-4 h-4 text-red-500" />
+                       <span className="text-[10px] font-bold uppercase tracking-wider">Écarts ({'>'}{balanceTolerance}€)</span>
+                    </div>
+                    <div className="text-2xl font-black font-mono text-slate-800">
+                      {comparisonData.filter(r => Math.abs(r.ecart) > balanceTolerance).length}
+                    </div>
+                  </div>
+                  <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 shadow-sm">
+                    <div className="flex items-center gap-2 text-slate-500 mb-2">
+                       <FileSearch className="w-4 h-4 text-blue-500" />
+                       <span className="text-[10px] font-bold uppercase tracking-wider">Absent Balance</span>
+                    </div>
+                    <div className="text-2xl font-black font-mono text-slate-800">
+                      {comparisonData.filter(r => r.hasFec && !r.hasBal).length}
+                    </div>
+                  </div>
+                  <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 shadow-sm">
+                    <div className="flex items-center gap-2 text-slate-500 mb-2">
+                       <Files className="w-4 h-4 text-indigo-500" />
+                       <span className="text-[10px] font-bold uppercase tracking-wider">Absent FEC</span>
+                    </div>
+                    <div className="text-2xl font-black font-mono text-slate-800">
+                      {comparisonData.filter(r => !r.hasFec && r.hasBal).length}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Filters and Actions */}
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6 pt-2">
+                  <div className="flex items-center gap-2 overflow-x-auto pb-1 sm:pb-0 no-scrollbar">
+                    <button 
+                      onClick={() => setBalFilter('all')}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all whitespace-nowrap border ${balFilter === 'all' ? 'bg-indigo-600 border-indigo-600 text-white shadow-sm' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'}`}
+                    >
+                      Tous ({comparisonData.length})
+                    </button>
+                    <button 
+                      onClick={() => setBalFilter('errors')}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all whitespace-nowrap border ${balFilter === 'errors' ? 'bg-red-600 border-red-600 text-white shadow-sm' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'}`}
+                    >
+                      Écarts ({comparisonData.filter(r => Math.abs(r.ecart) > balanceTolerance).length})
+                    </button>
+                    <button 
+                      onClick={() => setBalFilter('missing-bal')}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all whitespace-nowrap border ${balFilter === 'missing-bal' ? 'bg-amber-600 border-amber-600 text-white shadow-sm' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'}`}
+                    >
+                      Manque Balance ({comparisonData.filter(r => r.hasFec && !r.hasBal).length})
+                    </button>
+                    <button 
+                      onClick={() => setBalFilter('missing-fec')}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all whitespace-nowrap border ${balFilter === 'missing-fec' ? 'bg-blue-600 border-blue-600 text-white shadow-sm' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'}`}
+                    >
+                      Manque FEC ({comparisonData.filter(r => !r.hasFec && r.hasBal).length})
+                    </button>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    {balRawText && (
+                      <button 
+                        onClick={() => setShowBalRaw(!showBalRaw)}
+                        className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-bold transition-all border ${showBalRaw ? 'bg-slate-800 border-slate-800 text-white' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'}`}
+                      >
+                        {showBalRaw ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                        {showBalRaw ? 'Masquer Extraction' : 'Voir Extraction'}
+                      </button>
+                    )}
+                    <button onClick={() => { setBalanceFile(null); setBalSoldes({}); setBalRawText(''); }} className="text-xs text-indigo-600 hover:text-indigo-800 font-bold bg-indigo-50 px-3 py-1.5 rounded-lg border border-indigo-100 transition-colors">
+                      Changer de fichier
+                    </button>
+                  </div>
+                </div>
+
+                {/* Raw text extractor debugger */}
+                {showBalRaw && balRawText && (
+                  <div className="mb-6 animate-in slide-in-from-top-2 duration-300">
+                    <div className="bg-slate-900 rounded-xl p-4 overflow-hidden border border-slate-800 shadow-xl">
+                      <div className="flex items-center justify-between mb-3">
+                        <h4 className="text-[10px] font-black text-slate-500 uppercase tracking-widest flex items-center gap-2">
+                          <ScanText className="w-3.5 h-3.5" /> Debug : Texte extrait du PDF
+                        </h4>
+                        <span className="text-[10px] text-slate-500 bg-slate-800 px-2 py-0.5 rounded">Brut</span>
+                      </div>
+                      <pre className="text-[10px] font-mono text-slate-400 bg-slate-950/50 p-4 rounded-lg max-h-[300px] overflow-y-auto whitespace-pre-wrap leading-relaxed select-all">
+                        {balRawText}
+                      </pre>
                     </div>
                   </div>
                 )}
 
+                {/* --- Message global (succès ou erreur) --- */}
+                {(() => {
+                  const totalAbsEcart = comparisonData.reduce((sum, row) => sum + Math.abs(row.ecart), 0);
+                  const hasEcarts = comparisonData.some(r => Math.abs(r.ecart) > balanceTolerance);
+                  const isHighDiscrepancy = totalAbsEcart > 1000;
+
+                  if (hasEcarts) {
+                    return (
+                      <div className={`p-6 border rounded-2xl mb-6 shadow-2xl flex flex-col md:flex-row items-start gap-6 animate-in slide-in-from-bottom-4 duration-500 overflow-hidden relative ${isHighDiscrepancy ? 'bg-red-950 border-red-800 text-red-50' : 'bg-red-50 border-red-200 text-red-800'}`}>
+                        {isHighDiscrepancy && <div className="absolute top-0 right-0 p-4 opacity-5 pointer-events-none text-red-500"><AlertCircle className="w-32 h-32" /></div>}
+                        
+                        <div className={`p-3 rounded-2xl shrink-0 ${isHighDiscrepancy ? 'bg-red-500 text-white shadow-lg' : 'bg-red-100 text-red-600'}`}>
+                          <AlertCircle className="w-8 h-8" />
+                        </div>
+                        
+                        <div className="flex-1 space-y-4">
+                          <div>
+                            <h4 className={`text-xl font-black uppercase tracking-tight mb-2 ${isHighDiscrepancy ? 'text-white' : 'text-red-900'}`}>
+                              {isHighDiscrepancy ? 'CRITICAL : Anomalie de rapprochement majeure' : 'Anomalies de rapprochement détectées'}
+                            </h4>
+                            <p className={`text-sm leading-relaxed opacity-90 ${isHighDiscrepancy ? 'text-red-100' : 'text-red-700'}`}>
+                              L'écart absolu cumulé s'élève à <strong className="font-mono text-lg underline decoration-amber-400 decoration-2 underline-offset-4">{fmt2(totalAbsEcart)} €</strong>, dépassant largement le seuil de tolérance défini.
+                            </p>
+                          </div>
+
+                          {isHighDiscrepancy && (
+                            <div className="bg-white/5 border border-white/10 rounded-xl p-4 space-y-3">
+                              <h5 className="text-[10px] font-black text-white uppercase tracking-widest flex items-center gap-2">
+                                <Search className="w-3.5 h-3.5" /> Pistes de vérification recommandées :
+                              </h5>
+                              <ul className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                {[
+                                  { t: 'Formats de date', d: 'Inversion jour/mois ou année sur 2 chiffres.' },
+                                  { t: 'Sens des écritures', d: 'Avoirs ou montants négatifs mal interprétés.' },
+                                  { t: 'Auxiliaires fusionnés', d: 'Comptes de tiers non détaillés dans la balance.' },
+                                  { t: 'Erreurs OCR', d: 'Chiffre 9 lu comme 0, virgules mal placées sur PDF scanné.' },
+                                  { t: 'Paramètres Conversion', d: 'Vérifiez les paramètres d\'encodage au chargement.' },
+                                  { t: 'Solde Initial', d: 'Le solde à nouveau est-il inclus dans la balance ?' }
+                                ].map((step, i) => (
+                                  <li key={i} className="flex items-start gap-2 text-xs">
+                                    <div className="w-1.5 h-1.5 rounded-full bg-red-400 mt-1.5 shrink-0" />
+                                    <div>
+                                      <span className="font-bold text-white">{step.t} :</span>{' '}
+                                      <span className="text-red-200">{step.d}</span>
+                                    </div>
+                                  </li>
+                                ))}
+                              </ul>
+                            </div>
+                          )}
+
+                          <p className={`text-[10px] uppercase font-bold tracking-wider pt-2 ${isHighDiscrepancy ? 'text-red-400' : 'text-red-500'}`}>
+                            {isHighDiscrepancy ? '⚠️ Une revue manuelle ligne par ligne est impérative.' : 'Une vérification est conseillée pour les comptes en rouge ci-dessous.'}
+                          </p>
+                        </div>
+                      </div>
+                    );
+                  }
+                  
+                  return (
+                    <div className="p-4 bg-emerald-50 border border-emerald-200 rounded-lg mb-6 flex items-start gap-3">
+                      <CheckCircle2 className="w-5 h-5 text-emerald-600 mt-0.5" />
+                      <div>
+                        <h4 className="font-semibold text-emerald-800">Balance parfaitement équilibrée</h4>
+                        <p className="text-sm text-emerald-700 mt-1">Tous les soldes du FEC correspondent à la balance importée (Tolérance: {balanceTolerance} €).</p>
+                      </div>
+                    </div>
+                  );
+                })()}
+
                 {/* --- Tableau détaillé des écarts --- */}
-                <div className="overflow-x-auto border border-slate-200 rounded-lg max-h-[500px] overflow-y-auto">
-                  <table className="w-full text-left border-collapse min-w-[800px]">
-                    <thead className="sticky top-0 bg-slate-50 shadow-sm z-10">
-                      <tr className="border-b border-slate-200">
-                        <th className="p-3 text-xs font-semibold text-slate-500 uppercase">Compte</th>
-                        <th className="p-3 text-xs font-semibold text-slate-500 uppercase">Libellé</th>
-                        <th className="p-3 text-xs font-semibold text-slate-500 uppercase text-right">Solde FEC</th>
-                        <th className="p-3 text-xs font-semibold text-slate-500 uppercase text-right">Solde Balance</th>
-                        <th className="p-3 text-xs font-semibold text-slate-500 uppercase text-right">Écart</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100">
-                      {comparisonData.filter(r => Math.abs(r.soldeFec) > balanceTolerance || Math.abs(r.soldeBal) > balanceTolerance).map((r, i) => {
-                        const isErr = Math.abs(r.ecart) > balanceTolerance;
-                        return (
-                          <tr key={i} className={`hover:bg-slate-50 ${isErr ? 'bg-red-50/50' : ''}`}>
-                            <td className="p-3 text-sm font-mono text-slate-700">{r.compte}</td>
-                            <td className="p-3 text-sm text-slate-700 truncate max-w-[200px]">{r.lib}</td>
-                            <td className="p-3 text-sm font-mono text-right text-slate-700">{fmt2(r.soldeFec)}</td>
-                            <td className="p-3 text-sm font-mono text-right text-slate-700">{fmt2(r.soldeBal)}</td>
-                            <td className={`p-3 text-sm font-mono text-right font-medium ${isErr ? 'text-red-600' : 'text-emerald-600'}`}>
-                              {fmt2(r.ecart)}
+                <div className="overflow-hidden border border-slate-200 rounded-2xl shadow-sm bg-white">
+                  <div className="max-h-[600px] overflow-y-auto">
+                    <table className="w-full text-left border-collapse min-w-[800px]">
+                      <thead className="sticky top-0 bg-white/95 backdrop-blur-sm shadow-sm z-10">
+                        <tr className="border-b border-slate-100">
+                          <th className="p-4 text-xs font-black text-slate-500 uppercase tracking-widest italic font-serif">Compte</th>
+                          <th className="p-4 text-xs font-black text-slate-500 uppercase tracking-widest italic font-serif">Libellé</th>
+                          <th className="p-4 text-xs font-black text-slate-500 uppercase tracking-widest italic font-serif text-right">Solde FEC</th>
+                          <th className="p-4 text-xs font-black text-slate-500 uppercase tracking-widest italic font-serif text-right">Solde Balance</th>
+                          <th className="p-4 text-xs font-black text-slate-500 uppercase tracking-widest italic font-serif text-right">Écart</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-50">
+                        {comparisonData.length === 0 ? (
+                          <tr>
+                            <td colSpan={5} className="p-12 text-center">
+                              <div className="flex flex-col items-center gap-2 text-slate-400">
+                                <Search className="w-10 h-10 opacity-20" />
+                                <p className="italic">Aucun compte ne correspond aux filtres sélectionnés.</p>
+                              </div>
                             </td>
                           </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
+                        ) : comparisonData.map((r, i) => {
+                          const isErr = Math.abs(r.ecart) > balanceTolerance;
+                          const isMissing = !r.hasFec || !r.hasBal;
+                          return (
+                            <tr 
+                              key={normLevel + r.compte + i} 
+                              onClick={() => r.hasFec && setSelectedNorm(r.norm)}
+                              className={`group hover:bg-slate-900 hover:text-white transition-all duration-200 border-l-4 cursor-pointer ${isErr ? 'border-l-red-500 bg-red-50/30' : isMissing ? 'border-l-amber-400 bg-amber-50/20' : 'border-l-transparent'}`}
+                            >
+                              <td className="p-4 text-sm font-bold font-mono tracking-tight flex items-center gap-2">
+                                {r.compte}
+                                {r.hasFec && <ExternalLink className="w-3 h-3 opacity-0 group-hover:opacity-50 transition-opacity" />}
+                              </td>
+                              <td className="p-4 text-sm text-slate-600 group-hover:text-slate-300 truncate max-w-[200px] italic font-serif">{r.lib || '-'}</td>
+                              <td className={`p-4 text-sm font-mono text-right tabular-nums ${!r.hasFec ? 'opacity-30' : ''}`}>{fmt2(r.soldeFec)}</td>
+                              <td className={`p-4 text-sm font-mono text-right tabular-nums ${!r.hasBal ? 'opacity-30' : ''}`}>{fmt2(r.soldeBal)}</td>
+                              <td className={`p-4 text-sm font-mono text-right font-black tabular-nums transition-transform group-hover:scale-110 ${isErr ? 'text-red-500' : 'text-emerald-500'}`}>
+                                {fmt2(r.ecart)}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
                 </div>
               </div>
             )}
@@ -2033,6 +2501,122 @@ export default function App() {
               </button>
             )}
           </div>
+
+          {/* --- Panneau latéral des détails FEC --- */}
+          <AnimatePresence>
+            {selectedNorm && (
+              <>
+                <motion.div 
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  onClick={() => setSelectedNorm(null)}
+                  className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-40"
+                />
+                <motion.div 
+                  initial={{ x: '100%' }}
+                  animate={{ x: 0 }}
+                  exit={{ x: '100%' }}
+                  transition={{ type: 'spring', damping: 25, stiffness: 200 }}
+                  className="fixed top-0 right-0 h-full w-full max-w-2xl bg-white shadow-2xl z-50 flex flex-col border-l border-slate-200"
+                >
+                  <div className="p-6 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
+                    <div>
+                      <h3 className="text-lg font-bold text-slate-900 flex items-center gap-3">
+                        <FileText className="w-5 h-5 text-indigo-500" />
+                        Détail des écritures FEC
+                      </h3>
+                      <p className="text-sm text-slate-500 mt-1">
+                        Regroupement : <span className="font-mono font-bold text-indigo-600">{selectedNorm}</span>
+                      </p>
+                    </div>
+                    <button 
+                      onClick={() => setSelectedNorm(null)}
+                      className="p-2 hover:bg-slate-200 rounded-full text-slate-400 hover:text-slate-600 transition-colors"
+                    >
+                      <X className="w-6 h-6" />
+                    </button>
+                  </div>
+
+                  <div className="flex-1 overflow-y-auto p-6">
+                    <div className="space-y-4">
+                      {transformed
+                        .filter(r => {
+                          const normalizeAccount = (acc: string) => {
+                            if (normLevel === 'full') return acc;
+                            return acc.substring(0, parseInt(normLevel));
+                          };
+                          return normalizeAccount(r.CompteNum) === selectedNorm;
+                        })
+                        .map((r, i) => (
+                          <div key={i} className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm hover:border-indigo-300 transition-colors">
+                            <div className="flex justify-between items-start mb-3">
+                              <div>
+                                <span className="text-[10px] font-bold text-indigo-500 uppercase tracking-widest bg-indigo-50 px-2 py-0.5 rounded">
+                                  {r.JournalCode} — {r.JournalLib}
+                                </span>
+                                <div className="text-sm font-bold text-slate-800 mt-1">{r.EcritureLib}</div>
+                              </div>
+                              <div className="text-right">
+                                <div className="text-xs font-mono text-slate-400">N° {r.EcritureNum}</div>
+                                <div className="text-xs font-bold text-slate-500 mt-1">{r.EcritureDate}</div>
+                              </div>
+                            </div>
+                            
+                            <div className="flex items-center justify-between border-t border-slate-50 pt-3">
+                              <div className="flex items-center gap-3 text-xs">
+                                <span className="font-mono font-bold text-slate-700 bg-slate-100 px-2 py-0.5 rounded">
+                                  {r.CompteNum}
+                                </span>
+                                <span className="text-slate-500 italic max-w-[200px] truncate">{r.CompteLib}</span>
+                              </div>
+                              <div className="flex gap-4 font-mono text-sm tabular-nums">
+                                {r.Debit > 0 && <span className="text-emerald-600 font-bold">D: {fmt2(r.Debit)}</span>}
+                                {r.Credit > 0 && <span className="text-amber-600 font-bold">C: {fmt2(r.Credit)}</span>}
+                              </div>
+                            </div>
+                          </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="p-6 bg-slate-50 border-t border-slate-100">
+                    <div className="flex justify-between items-center">
+                      <div className="text-xs text-slate-400 font-bold uppercase tracking-widest">
+                        Total sélection
+                      </div>
+                      <div className="flex gap-4">
+                        <div className="text-right">
+                          <div className="text-[10px] text-slate-400 uppercase font-black tracking-tighter">Débit</div>
+                          <div className="text-lg font-black text-slate-800 tabular-nums">
+                            {fmt2(transformed.filter(r => {
+                              const normalizeAccount = (acc: string) => {
+                                if (normLevel === 'full') return acc;
+                                return acc.substring(0, parseInt(normLevel));
+                              };
+                              return normalizeAccount(r.CompteNum) === selectedNorm;
+                            }).reduce((s, r) => s + (r.Debit || 0), 0))} €
+                          </div>
+                        </div>
+                        <div className="text-right">
+                          <div className="text-[10px] text-slate-400 uppercase font-black tracking-tighter">Crédit</div>
+                          <div className="text-lg font-black text-slate-800 tabular-nums">
+                            {fmt2(transformed.filter(r => {
+                              const normalizeAccount = (acc: string) => {
+                                if (normLevel === 'full') return acc;
+                                return acc.substring(0, parseInt(normLevel));
+                              };
+                              return normalizeAccount(r.CompteNum) === selectedNorm;
+                            }).reduce((s, r) => s + (r.Credit || 0), 0))} €
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </motion.div>
+              </>
+            )}
+          </AnimatePresence>
         </div>
       )}
     </div>
