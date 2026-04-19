@@ -1427,7 +1427,7 @@ export default function App() {
                 key={item.s}
                 onClick={() => { if (item.s === 1 || (item.s === 2 && rawData) || (item.s === 3 && transformed.length > 0) || (item.s === 4 && transformed.length > 0)) setStep(item.s as any); }}
                 disabled={!(item.s === 1 || (item.s === 2 && rawData) || (item.s === 3 && transformed.length > 0) || (item.s === 4 && transformed.length > 0))}
-                className={`w-full flex items-center gap-3 px-4 py-3 rounded-2xl text-xs font-bold transition-all ${step === item.s ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-600/20' : 'text-[var(--text-secondary)] hover:bg-slate-50 dark:hover:bg-slate-900/50 disabled:opacity-30'}`}
+                className={`w-full flex items-center gap-3 px-4 py-3 rounded-2xl text-xs font-bold transition-all ${step === item.s ? 'bg-indigo-600 hover:bg-indigo-700 text-white shadow-lg shadow-indigo-600/20' : 'text-[var(--text-secondary)] hover:bg-slate-100 dark:hover:bg-slate-950 disabled:opacity-30'}`}
               >
                 <item.i className="w-4 h-4" /> {item.l}
               </button>
