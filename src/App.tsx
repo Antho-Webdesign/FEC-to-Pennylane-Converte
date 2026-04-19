@@ -640,6 +640,7 @@ export default function App() {
   const [normLevel, setNormLevel] = useState<'full' | '3' | '6'>('full');
   const [selectedNorm, setSelectedNorm] = useState<string | null>(null);
   const [lastSuccessfulBal, setLastSuccessfulBal] = useState<{ name: string, soldes: Record<string, { lib: string, solde: number }> } | null>(null);
+  const [pdfRetryWithOcr, setPdfRetryWithOcr] = useState<File | null>(null);
 
   // --- Références DOM ---
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -1062,12 +1063,21 @@ export default function App() {
     setBalProgress(0);
     setErrBal('');
     setBalRawText('');
+    setPdfRetryWithOcr(null);
     try {
-      if (f.name.toLowerCase().endsWith('.pdf')) {
+      const isPdf = f.name.toLowerCase().endsWith('.pdf');
+      if (isPdf) {
         const text = await extractTextFromPDF(f, useOcr, (p) => setBalProgress(Math.round(p)));
         setBalRawText(text);
       }
       const extractedSoldes = await parseBalanceFile(f, useOcr, (p) => setBalProgress(Math.round(p)));
+      
+      // Si on n'a rien extrait d'un PDF alors qu'on n'est pas en OCR, c'est probablement un scan
+      if (isPdf && !useOcr && Object.keys(extractedSoldes).length === 0) {
+        setPdfRetryWithOcr(f);
+        throw new Error("Aucune donnée extraite. Ce document semble être une image (scan).");
+      }
+
       setBalSoldes(extractedSoldes);
       setBalanceFile(f);
       setFileNameBal(f.name);
@@ -1078,6 +1088,10 @@ export default function App() {
       localStorage.setItem('fec_last_balance', JSON.stringify(balData));
     } catch (e: any) {
       setErrBal(e.message || 'Erreur inconnue lors de la lecture de la balance.');
+      // Si c'est un PDF et qu'on n'est pas en OCR, on propose le retry même si y'a eu une erreur technique
+      if (f.name.toLowerCase().endsWith('.pdf') && !useOcr) {
+        setPdfRetryWithOcr(f);
+      }
     } finally {
       setLoadingBal(false);
     }
@@ -2211,6 +2225,40 @@ export default function App() {
                     </div>
                   )}
                   {errBal && <div className="mt-4 p-4 bg-red-50 text-red-700 border border-red-200 rounded-xl flex items-center gap-3"><AlertCircle className="w-5 h-5" /> {errBal}</div>}
+                  
+                  {pdfRetryWithOcr && !loadingBal && (
+                    <div className="mt-4 p-5 bg-amber-50 border border-amber-200 rounded-2xl animate-in slide-in-from-top-2 duration-300">
+                      <div className="flex items-start gap-4">
+                        <div className="p-2 bg-amber-100 rounded-xl">
+                          <ScanText className="w-6 h-6 text-amber-600" />
+                        </div>
+                        <div className="flex-1">
+                          <h4 className="text-sm font-bold text-amber-900 mb-1">Activer l'OCR (Reconnaissance de texte) ?</h4>
+                          <p className="text-xs text-amber-700 leading-relaxed mb-4">
+                            L'extraction standard n'a rien retourné. Ce PDF est probablement un document numérisé (image). 
+                            L'analyse par OCR est plus lente mais permet de lire le texte directement sur les images.
+                          </p>
+                          <div className="flex items-center gap-3">
+                            <button 
+                              onClick={() => {
+                                setUseOcr(true);
+                                handleBalanceCheck(pdfRetryWithOcr);
+                              }}
+                              className="bg-amber-600 hover:bg-amber-700 text-white px-4 py-2 rounded-lg text-xs font-black uppercase tracking-widest shadow-sm transition-all active:scale-95 flex items-center gap-2"
+                            >
+                              <Check className="w-3.5 h-3.5" /> Lancer l'analyse OCR
+                            </button>
+                            <button 
+                              onClick={() => setPdfRetryWithOcr(null)}
+                              className="text-[10px] font-bold text-amber-500 hover:text-amber-700 uppercase tracking-widest"
+                            >
+                              Ignorer
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 {lastSuccessfulBal && !loadingBal && (
