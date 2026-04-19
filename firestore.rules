@@ -1,0 +1,69 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Default Deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Common Helpers
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return request.auth.uid == userId;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    // Mappings Validation
+    function isValidMappingProfile(data) {
+      return data.userId == request.auth.uid 
+        && data.name is string && data.name.size() > 0 && data.name.size() <= 100
+        && data.mapping is map
+        && data.createdAt == request.time
+        && data.updatedAt == request.time;
+    }
+
+    match /mappingProfiles/{profileId} {
+      allow get: if isSignedIn() && isOwner(resource.data.userId);
+      allow list: if isSignedIn() && resource.data.userId == request.auth.uid;
+      
+      allow create: if isSignedIn() 
+        && isValidId(profileId)
+        && isValidMappingProfile(request.resource.data);
+
+      allow update: if isSignedIn()
+        && isOwner(resource.data.userId)
+        && request.resource.data.userId == resource.data.userId
+        && request.resource.data.createdAt == resource.data.createdAt
+        && request.resource.data.updatedAt == request.time
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name', 'mapping', 'updatedAt']);
+
+      allow delete: if isSignedIn() && isOwner(resource.data.userId);
+    }
+
+    // Conversions Validation
+    function isValidConversion(data) {
+      return data.userId == request.auth.uid
+        && data.fileName is string && data.fileName.size() <= 200
+        && data.status in ['success', 'error', 'pending']
+        && data.createdAt == request.time;
+    }
+
+    match /conversions/{convId} {
+      allow get: if isSignedIn() && isOwner(resource.data.userId);
+      allow list: if isSignedIn() && resource.data.userId == request.auth.uid;
+
+      allow create: if isSignedIn()
+        && isValidId(convId)
+        && isValidConversion(request.resource.data);
+      
+      allow delete: if isSignedIn() && isOwner(resource.data.userId);
+    }
+  }
+}

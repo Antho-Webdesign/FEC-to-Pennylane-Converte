@@ -1,0 +1,40 @@
+{
+  "entities": {
+    "MappingProfile": {
+      "title": "Mapping Profile",
+      "description": "Stores user-defined column mappings for FEC conversion.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "name": { "type": "string" },
+        "mapping": { "type": "object" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "name", "mapping"]
+    },
+    "ConversionHistory": {
+      "title": "Conversion History",
+      "description": "Metadata about performed conversions.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "fileName": { "type": "string" },
+        "entryCount": { "type": "number" },
+        "status": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "fileName", "status"]
+    }
+  },
+  "firestore": {
+    "mappingProfiles/{profileId}": {
+      "schema": "MappingProfile",
+      "description": "Collection of column mapping configurations."
+    },
+    "conversions/{conversionId}": {
+      "schema": "ConversionHistory",
+      "description": "Log of previous conversion activities."
+    }
+  }
+}

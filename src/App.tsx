@@ -8,7 +8,9 @@ import pdfWorker from 'pdfjs-dist/build/pdf.worker.min.js?url';
 import Tesseract from 'tesseract.js';
 import JSZip from 'jszip';
 import { AnimatePresence, motion } from 'motion/react';
-import { Upload, FileSpreadsheet, Settings, ArrowRight, ArrowLeft, Download, RefreshCw, AlertCircle, AlertTriangle, CheckCircle2, Scale, Lock, Sun, Moon, Search, ArrowUpDown, ArrowUp, ArrowDown, Save, Trash2, ListFilter, Check, ScanText, Files, FileText, X, Filter, FileSearch, Layers, Eye, EyeOff, ExternalLink, History } from 'lucide-react';
+import { Upload, FileSpreadsheet, Settings, ArrowRight, ArrowLeft, Download, RefreshCw, AlertCircle, AlertTriangle, CheckCircle2, Scale, Lock, Sun, Moon, Search, ArrowUpDown, ArrowUp, ArrowDown, Save, Trash2, ListFilter, Check, ScanText, Files, FileText, X, Filter, FileSearch, Layers, Eye, EyeOff, ExternalLink, History, Sparkles, LogOut, LayoutDashboard, Database, ShieldCheck, CloudUpload } from 'lucide-react';
+import { auth, db, googleProvider, signInWithPopup, signOut, onAuthStateChanged, collection, addDoc, query, where, getDocs, deleteDoc, doc, updateDoc, serverTimestamp, orderBy, limit, User } from './lib/firebase';
+import { suggestMapping, analyzeAnomalies } from './lib/gemini';
 
 // Configuration du worker PDF.js pour la lecture de documents PDF
 pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorker;
@@ -565,22 +567,106 @@ async function parseBalanceFile(file: File, useOcr = false, onProgress?: (p: num
 // ============================================================================
 
 export default function App() {
-  // --- État d'authentification ---
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
-  const [loginUser, setLoginUser] = useState('');
-  const [loginPass, setLoginPass] = useState('');
-  const [loginErr, setLoginErr] = useState('');
-  
+  // --- Authentification Cloud ---
+  const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [authLoading, setAuthLoading] = useState(true);
+
   // --- Thème ---
   const [isDarkMode, setIsDarkMode] = useState(false);
 
   useEffect(() => {
-    if (isDarkMode) {
-      document.documentElement.classList.add('dark');
-    } else {
-      document.documentElement.classList.remove('dark');
+    const unsubscribe = onAuthStateChanged(auth, (user) => {
+      setCurrentUser(user);
+      setAuthLoading(false);
+      if (user) {
+        fetchCloudPresets(user.uid);
+      }
+    });
+    return () => unsubscribe();
+  }, []);
+
+  const handleGoogleLogin = async () => {
+    try {
+      await signInWithPopup(auth, googleProvider);
+    } catch (error) {
+      console.error("Login Error:", error);
     }
-  }, [isDarkMode]);
+  };
+
+  const handleLogout = async () => {
+    try {
+      await signOut(auth);
+      setPresets([]);
+    } catch (error) {
+      console.error("Logout Error:", error);
+    }
+  };
+
+  // --- Synchronisation Cloud des Presets ---
+  const fetchCloudPresets = async (userId: string) => {
+    try {
+      const q = query(collection(db, 'mappingProfiles'), where('userId', '==', userId));
+      const querySnapshot = await getDocs(q);
+      const loadedPresets: any[] = [];
+      querySnapshot.forEach((doc) => {
+        loadedPresets.push({ id: doc.id, ...doc.data() });
+      });
+      setPresets(loadedPresets);
+    } catch (error) {
+      console.error("Error fetching presets:", error);
+    }
+  };
+
+  const saveToCloud = async (name: string, mappingData: any, fmt: string) => {
+    if (!currentUser) return;
+    try {
+      const docRef = await addDoc(collection(db, 'mappingProfiles'), {
+        userId: currentUser.uid,
+        name,
+        mapping: mappingData,
+        amtFmt: fmt,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp()
+      });
+      setPresets(prev => [...prev, { id: docRef.id, name, mapping: mappingData, amtFmt: fmt }]);
+      setActivePreset(name);
+      setNewPresetName('');
+    } catch (error) {
+      console.error("Error saving preset:", error);
+    }
+  };
+
+  const deleteFromCloud = async (id: string) => {
+    try {
+      await deleteDoc(doc(db, 'mappingProfiles', id));
+      setPresets(prev => prev.filter(p => p.id !== id));
+    } catch (error) {
+      console.error("Error deleting preset:", error);
+    }
+  };
+
+  // --- Intelligence Artificielle (Gemini) ---
+  const [isAiLoading, setIsAiLoading] = useState(false);
+  const [aiAnalysis, setAiAnalysis] = useState<string | null>(null);
+
+  const handleAiMappingSuggestion = async () => {
+    if (!rawData) return;
+    setIsAiLoading(true);
+    const suggestion = await suggestMapping(rawData.headers, FIELDS);
+    if (suggestion) {
+      setMapping(prev => ({ ...prev, ...suggestion }));
+      setAmtFmt(det({ ...mapping, ...suggestion }, signConv) || 'A');
+    }
+    setIsAiLoading(false);
+  };
+
+  const handleAiAnomalyAnalysis = async () => {
+    if (!accountAnomalies) return;
+    setIsAiLoading(true);
+    const analysis = await analyzeAnomalies(accountAnomalies);
+    setAiAnalysis(analysis);
+    setIsAiLoading(false);
+  };
 
   // --- État du processus d'import/export ---
   const [step, setStep] = useState<1 | 2 | 3 | 4>(1); // 1: Upload, 2: Mapping, 3: Preview, 4: Balance Check
@@ -1177,18 +1263,6 @@ export default function App() {
     return entries;
   }, [transformed, balSoldes, balanceFile, normLevel, balFilter, balanceTolerance]);
 
-  /**
-   * Gère la soumission du formulaire de connexion.
-   */
-  const handleLogin = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (loginUser === 'bdoSupport' && loginPass === 'AdminBdoSoftware') {
-      setIsAuthenticated(true);
-      setLoginErr('');
-    } else {
-      setLoginErr('Identifiant ou mot de passe incorrect.');
-    }
-  };
 
   /**
    * Gère le tri des colonnes dans le tableau d'aperçu.
@@ -1257,19 +1331,8 @@ export default function App() {
     }
   }, []);
 
-  const savePreset = () => {
-    if (!newPresetName.trim()) return;
-    const newPresets = [...presets, { name: newPresetName.trim(), mapping, amtFmt }];
-    setPresets(newPresets);
-    localStorage.setItem('fec_mapping_presets', JSON.stringify(newPresets));
-    setNewPresetName('');
-  };
-
-  const deletePreset = (index: number) => {
-    const newPresets = presets.filter((_, i) => i !== index);
-    setPresets(newPresets);
-    localStorage.setItem('fec_mapping_presets', JSON.stringify(newPresets));
-  };
+  // --- Nettoyage des anciennes fonctions locales ---
+  // Nous utilisons maintenant saveToCloud et deleteFromCloud définis plus haut.
 
   const applyPreset = (p: { name: string, mapping: Record<string, string>, amtFmt: string }) => {
     setActivePreset(p.name);
@@ -1289,216 +1352,274 @@ export default function App() {
   // RENDU DU COMPOSANT
   // ============================================================================
 
-  // --- Écran de connexion ---
-  if (!isAuthenticated) {
+  // --- Écran de connexion Cloud ---
+  if (authLoading) {
     return (
-      <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4 font-sans relative">
-        <button 
-          onClick={() => setIsDarkMode(!isDarkMode)}
-          className="absolute top-4 right-4 p-2 rounded-full bg-white border border-slate-200 text-slate-500 hover:bg-slate-50 transition-colors shadow-sm"
+      <div className="min-h-screen grid place-items-center bg-[var(--bg-primary)]">
+        <div className="flex flex-col items-center gap-4">
+          <RefreshCw className="w-12 h-12 text-indigo-500 animate-spin" />
+          <p className="text-sm font-medium text-[var(--text-secondary)]">Initialisation sécurisée...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!currentUser) {
+    return (
+      <div className="min-h-screen flex flex-col items-center justify-center p-6 bg-[var(--bg-primary)]">
+        <motion.div 
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="w-full max-w-md glass-panel p-10 rounded-[32px] text-center"
         >
-          {isDarkMode ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
-        </button>
-        <div className="bg-white rounded-2xl shadow-xl p-8 w-full max-w-md border border-slate-100">
-          <div className="flex justify-center mb-6">
-            <div className="bg-indigo-100 p-4 rounded-2xl">
-              <Lock className="w-8 h-8 text-indigo-600" />
+          <div className="bg-indigo-600 w-20 h-20 rounded-[24px] flex items-center justify-center mx-auto mb-8 shadow-2xl shadow-indigo-500/30">
+            <ShieldCheck className="w-10 h-10 text-white" />
+          </div>
+          <h1 className="text-4xl font-extrabold tracking-tight text-[var(--text-primary)] mb-4">FEC Cloud</h1>
+          <p className="text-[var(--text-secondary)] mb-10 text-sm leading-relaxed max-w-[280px] mx-auto font-medium">
+            Accédez à vos outils de conversion comptable et réconciliation bancaire en un clic.
+          </p>
+          
+          <button 
+            onClick={handleGoogleLogin}
+            className="w-full flex items-center justify-center gap-4 bg-[var(--bg-secondary)] border border-[var(--border-color)] text-[var(--text-primary)] py-4 px-6 rounded-2xl font-bold shadow-sm hover:bg-slate-50 dark:hover:bg-slate-900 transition-all active:scale-[0.98]"
+          >
+            <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" className="w-6 h-6" alt="Google" referrerPolicy="no-referrer" />
+            Connexion avec Google
+          </button>
+          
+          <div className="mt-12 pt-8 border-t border-[var(--border-color)] flex flex-col items-center gap-4 opacity-40">
+            <span className="text-[10px] font-black uppercase tracking-[0.25em] text-slate-400">Powered by BDO Innovation</span>
+            <div className="flex gap-4">
+              <div className="w-8 h-8 rounded-full bg-slate-200 dark:bg-slate-800 animate-pulse" />
+              <div className="w-8 h-8 rounded-full bg-slate-200 dark:bg-slate-800 animate-pulse" />
             </div>
           </div>
-          <h1 className="text-2xl font-bold text-center text-slate-800 mb-2">Connexion</h1>
-          <p className="text-center text-slate-500 mb-8">Accès réservé au support BDO</p>
-          
-          <form onSubmit={handleLogin} className="space-y-5">
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1.5">Identifiant</label>
-              <input 
-                type="text" 
-                className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all"
-                value={loginUser}
-                onChange={e => setLoginUser(e.target.value)}
-                required
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1.5">Mot de passe</label>
-              <input 
-                type="password" 
-                className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all"
-                value={loginPass}
-                onChange={e => setLoginPass(e.target.value)}
-                required
-              />
-            </div>
-            
-            {loginErr && (
-              <div className="p-3 bg-red-50 text-red-700 text-sm rounded-lg flex items-center gap-2 border border-red-100">
-                <AlertCircle className="w-4 h-4 flex-shrink-0" /> {loginErr}
-              </div>
-            )}
-            
-            <button 
-              type="submit" 
-              className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-3 rounded-xl transition-colors mt-2 shadow-sm"
-            >
-              Se connecter
-            </button>
-          </form>
-        </div>
+        </motion.div>
       </div>
     );
   }
 
   // --- Application principale ---
   return (
-    <div className="max-w-5xl mx-auto p-4 md:p-6 font-sans text-slate-800">
-      <div className="flex items-center justify-between p-4 bg-white border border-slate-200 rounded-xl mb-6 shadow-sm">
-        <div className="flex items-center gap-4">
-          <div className="w-12 h-12 bg-amber-100 text-amber-600 rounded-lg flex items-center justify-center">
-            <FileSpreadsheet className="w-6 h-6" />
+    <div className="min-h-screen flex bg-[var(--bg-primary)] text-[var(--text-primary)] font-sans antialiased overflow-hidden">
+      {/* Sidebar Navigation */}
+      <aside className="w-72 border-r border-[var(--border-color)] bg-[var(--bg-secondary)] flex flex-col hidden lg:flex shrink-0 relative z-20">
+        <div className="p-8">
+          <div className="flex items-center gap-4 mb-10 group cursor-pointer" onClick={() => { reset(); setStep(1); }}>
+            <div className="bg-indigo-600 w-10 h-10 rounded-2xl flex items-center justify-center shadow-lg shadow-indigo-500/20 group-hover:scale-110 transition-transform">
+              <Database className="w-6 h-6 text-white" />
+            </div>
+            <div>
+              <span className="text-xl font-black tracking-tight block">FEC Explorer</span>
+              <span className="text-[10px] font-black text-indigo-500 uppercase tracking-widest">Enterprise Cloud</span>
+            </div>
           </div>
-          <div>
-            <h1 className="text-lg font-semibold text-slate-900">FEC → Pennylane Converter</h1>
-            <p className="text-sm text-slate-500">Convertisseur de fichier FEC vers Excel Pennylane</p>
+          
+          <nav className="space-y-2">
+            {[
+              { s: 1, l: 'Importation Data', i: FileSpreadsheet },
+              { s: 2, l: 'Configuration Mapping', i: Layers },
+              { s: 3, l: 'Analyse & Export', i: LayoutDashboard },
+              { s: 4, l: 'Réconciliation Balance', i: Scale },
+            ].map((item) => (
+              <button 
+                key={item.s}
+                onClick={() => { if (item.s === 1 || (item.s === 2 && rawData) || (item.s === 3 && transformed.length > 0) || (item.s === 4 && transformed.length > 0)) setStep(item.s as any); }}
+                disabled={!(item.s === 1 || (item.s === 2 && rawData) || (item.s === 3 && transformed.length > 0) || (item.s === 4 && transformed.length > 0))}
+                className={`w-full flex items-center gap-3 px-4 py-3 rounded-2xl text-xs font-bold transition-all ${step === item.s ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-600/20' : 'text-[var(--text-secondary)] hover:bg-slate-50 dark:hover:bg-slate-900/50 disabled:opacity-30'}`}
+              >
+                <item.i className="w-4 h-4" /> {item.l}
+              </button>
+            ))}
+          </nav>
+        </div>
+        
+        <div className="mt-auto p-4 border-t border-[var(--border-color)]">
+          <div className="flex items-center gap-4 p-4 rounded-3xl bg-slate-50 dark:bg-slate-900/40 border border-[var(--border-color)]">
+            <img src={currentUser.photoURL || `https://api.dicebear.com/7.x/avataaars/svg?seed=${currentUser.email}`} alt="User" className="w-12 h-12 rounded-2xl border-2 border-white dark:border-slate-800" referrerPolicy="no-referrer" />
+            <div className="flex-1 min-w-0">
+              <p className="text-xs font-black truncate">{currentUser.displayName}</p>
+              <p className="text-[10px] text-[var(--text-secondary)] font-bold truncate">{currentUser.email}</p>
+            </div>
+            <button onClick={handleLogout} className="text-slate-400 hover:text-red-500 transition-colors p-2 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-xl">
+              <LogOut className="w-4 h-4" />
+            </button>
           </div>
         </div>
-        <button 
-          onClick={() => setIsDarkMode(!isDarkMode)}
-          className="p-2 rounded-full bg-slate-50 border border-slate-200 text-slate-500 hover:bg-slate-100 transition-colors"
-          title="Basculer le thème"
-        >
-          {isDarkMode ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
-        </button>
-      </div>
+      </aside>
 
-      {/* ============================================================================ */}
-      {/* INDICATEUR D'ÉTAPE (Stepper) */}
-      {/* ============================================================================ */}
-      <div className="flex items-center mb-8 px-2">
-        {[ { n: 1, label: 'Fichier' }, { n: 2, label: 'Mapping' }, { n: 3, label: 'Export' }, { n: 4, label: 'Contrôle' } ].map((s, i) => (
-          <div key={s.n} className="flex items-center flex-1 last:flex-none">
-            <div className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-medium transition-colors
-              ${step > s.n ? 'bg-amber-600 text-white' : step === s.n ? 'bg-amber-100 text-amber-700 border-2 border-amber-600' : 'bg-slate-100 text-slate-400 border border-slate-200'}`}>
-              {step > s.n ? <CheckCircle2 className="w-5 h-5" /> : s.n}
+      {/* Main Content Area */}
+      <main className="flex-1 min-w-0 h-screen overflow-y-auto bg-[var(--bg-primary)] flex flex-col relative z-10 transition-colors duration-300">
+        {/* Top Header */}
+        <header className="h-20 shrink-0 border-b border-[var(--border-color)] bg-[var(--bg-secondary)]/80 backdrop-blur-md flex items-center justify-between px-8 sticky top-0 z-30">
+          <div className="flex items-center gap-4">
+            <button 
+              onClick={() => setIsDarkMode(!isDarkMode)}
+              className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-900 border border-[var(--border-color)] text-[var(--text-secondary)] transition-all hover:scale-105"
+            >
+              {isDarkMode ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
+            </button>
+            <div className="h-6 w-px bg-[var(--border-color)]" />
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-2">Workspace</span>
+              <span className="px-3 py-1 bg-indigo-50 dark:bg-indigo-900/20 text-indigo-600 dark:text-indigo-400 rounded-lg text-xs font-bold border border-indigo-100 dark:border-indigo-900/50">Production v2.5</span>
             </div>
-            <span className={`text-sm ml-3 mr-4 whitespace-nowrap ${step === s.n ? 'text-amber-700 font-medium' : 'text-slate-500'}`}>
-              {s.label}
-            </span>
-            {i < 3 && <div className="flex-1 h-px bg-slate-200 mr-4"></div>}
           </div>
-        ))}
-      </div>
+          
+          <div className="flex items-center gap-6">
+            <div className="hidden sm:flex items-center gap-2">
+              {[1, 2, 3, 4].map((s) => (
+                <div 
+                  key={s} 
+                  className={`h-1.5 rounded-full transition-all duration-700 ${step === s ? 'w-8 bg-indigo-600' : 'w-4 bg-slate-200 dark:bg-slate-800'}`}
+                />
+              ))}
+            </div>
+          </div>
+        </header>
+
+        <div className="p-8 lg:p-12 animate-slide-up">
+          <div className="max-w-6xl mx-auto space-y-10">
 
       {/* ============================================================================ */}
-      {/* ÉTAPE 1 : IMPORT DU FICHIER FEC */}
+      {/* ÉTAPE 1 : IMPORTATION */}
       {/* ============================================================================ */}
       {step === 1 && (
-        <div className="animate-in fade-in slide-in-from-bottom-4 duration-300">
-          <div className="bg-white border border-slate-200 rounded-xl p-6 mb-4 shadow-sm">
-            <h2 className="text-sm font-semibold text-slate-500 uppercase tracking-wider mb-4 flex items-center gap-2">
-              ① Chargement du fichier FEC
-            </h2>
-            
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+          <div className="lg:col-span-8 flex flex-col gap-8">
+            <div className="space-y-2">
+              <h2 className="text-3xl font-black tracking-tight">Source des Données</h2>
+              <p className="text-[var(--text-secondary)] font-medium">Téléversez vos flux de trésorerie et journaux d'écritures.</p>
+            </div>
+
             <div 
-              className="border-2 border-dashed border-slate-300 rounded-xl p-10 text-center cursor-pointer hover:border-amber-500 hover:bg-amber-50 transition-colors bg-slate-50"
+              className={`relative overflow-hidden group cursor-pointer border-2 border-dashed rounded-[40px] p-20 transition-all duration-500 ${rawData ? 'bg-emerald-500/5 border-emerald-500/30' : 'bg-[var(--bg-secondary)] border-[var(--border-color)] hover:border-indigo-500/50 hover:bg-indigo-500/[0.02]'}`}
               onClick={() => fileInputRef.current?.click()}
-              onDragOver={(e) => { e.preventDefault(); e.currentTarget.classList.add('border-amber-500', 'bg-amber-50'); }}
-              onDragLeave={(e) => { e.currentTarget.classList.remove('border-amber-500', 'bg-amber-50'); }}
+              onDragOver={(e) => { e.preventDefault(); e.currentTarget.classList.add('border-indigo-500', 'bg-indigo-500/5'); }}
+              onDragLeave={(e) => { e.currentTarget.classList.remove('border-indigo-500', 'bg-indigo-500/5'); }}
               onDrop={handleDrop}
             >
               <input type="file" ref={fileInputRef} className="hidden" accept=".txt,.csv" multiple onChange={(e) => e.target.files && handleBatchFiles(e.target.files)} />
-              <Upload className="w-10 h-10 text-slate-400 mx-auto mb-3" />
-              <p className="text-slate-700 font-medium">
-                {batchFiles.length > 1 ? (
-                  <span className="flex items-center justify-center gap-2">
-                    <Files className="w-5 h-5 text-amber-600" /> 
-                    <strong>{batchFiles.length} fichiers FEC sélectionnés</strong>
-                  </span>
-                ) : fileName ? (
-                  <span>Fichier sélectionné : <strong className="text-amber-600">{fileName}</strong></span>
-                ) : (
-                  <span><strong>Déposez vos fichiers FEC</strong> ou cliquez pour parcourir</span>
-                )}
-              </p>
-              <p className="text-sm text-slate-500 mt-1">Formats acceptés : .txt · .csv (Multisélection possible)</p>
               
-              {rawData && (
-                <div className="mt-4 flex flex-wrap justify-center gap-2">
-                  <span className="px-2.5 py-1 bg-amber-100 text-amber-700 rounded-md text-xs font-medium">✓ {rawData.rows.length} lignes (premier fichier)</span>
-                  <span className="px-2.5 py-1 bg-amber-100 text-amber-700 rounded-md text-xs font-medium">Encodage : {rawData.encoding}</span>
+              <div className="flex flex-col items-center text-center relative z-10">
+                <div className={`w-24 h-24 rounded-[32px] flex items-center justify-center mb-8 shadow-2xl transition-all group-hover:scale-110 group-hover:rotate-3 ${rawData ? 'bg-emerald-500 text-white shadow-emerald-500/20' : 'bg-indigo-600 text-white shadow-indigo-600/40'}`}>
+                  {rawData ? <CheckCircle2 className="w-12 h-12" /> : <Upload className="w-12 h-12" />}
                 </div>
-              )}
+                
+                <div className="space-y-3">
+                  <p className="text-2xl font-black">
+                    {batchFiles.length > 1 ? (
+                      <span className="flex items-center justify-center gap-3">
+                        <Files className="w-6 h-6 text-indigo-500" /> 
+                        {batchFiles.length} FEC Sélectionnés
+                      </span>
+                    ) : fileName ? (
+                      <span className="text-emerald-600">{fileName}</span>
+                    ) : (
+                      <span>Flux Comptables</span>
+                    )}
+                  </p>
+                  <p className="text-sm text-[var(--text-secondary)] font-medium max-w-xs mx-auto opacity-70">
+                    Déposez vos extraits Sage 1000 (.txt / .csv) pour une analyse instantanée par l'IA.
+                  </p>
+                </div>
+
+                {rawData && (
+                  <motion.div initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} className="mt-10 flex gap-4">
+                    <div className="px-5 py-2 bg-emerald-500/10 text-emerald-600 rounded-2xl text-[11px] font-black uppercase tracking-widest border border-emerald-500/20 backdrop-blur-sm">
+                      {rawData.rows.length.toLocaleString()} Lignes
+                    </div>
+                    <div className="px-5 py-2 bg-indigo-500/10 text-indigo-600 rounded-2xl text-[11px] font-black uppercase tracking-widest border border-indigo-500/20 backdrop-blur-sm">
+                      {rawData.encoding}
+                    </div>
+                  </motion.div>
+                )}
+              </div>
+              
+              <div className="absolute top-0 right-0 p-12 opacity-[0.03] pointer-events-none">
+                <LayoutDashboard className="w-64 h-64" />
+              </div>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mt-6">
-              <div className="bg-slate-50 p-4 rounded-xl border border-slate-200">
-                <div className="flex items-center gap-2 mb-3">
-                  <Settings className="w-4 h-4 text-slate-400" />
-                  <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Profil de mapping</span>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="glass-panel p-6 rounded-[32px] flex items-center gap-5 group hover:border-indigo-500/30 transition-colors">
+                <div className="w-12 h-12 rounded-2xl bg-slate-50 dark:bg-slate-900 flex items-center justify-center text-[var(--text-secondary)] group-hover:text-indigo-500">
+                  <ShieldCheck className="w-6 h-6" />
                 </div>
-                <select 
-                  className="w-full bg-white border border-slate-200 rounded-lg p-2 text-sm font-bold text-slate-700 focus:ring-2 focus:ring-indigo-500 outline-none"
-                  value={activePreset || ''}
-                  onChange={(e) => setActivePreset(e.target.value || null)}
+                <div>
+                  <h4 className="text-xs font-black uppercase tracking-widest mb-1">Sécurité Bancaire</h4>
+                  <p className="text-[10px] font-medium text-[var(--text-secondary)]">Données chiffrées de bout en bout.</p>
+                </div>
+              </div>
+              <div className="glass-panel p-6 rounded-[32px] flex items-center gap-5 group hover:border-indigo-500/30 transition-colors">
+                <div className="w-12 h-12 rounded-2xl bg-slate-50 dark:bg-slate-900 flex items-center justify-center text-[var(--text-secondary)] group-hover:text-indigo-500">
+                  <Sparkles className="w-6 h-6" />
+                </div>
+                <div>
+                  <h4 className="text-xs font-black uppercase tracking-widest mb-1">Mapping IA</h4>
+                  <p className="text-[10px] font-medium text-[var(--text-secondary)]">Suggestion automatique des colonnes.</p>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <aside className="lg:col-span-4 space-y-6">
+            <div className="glass-panel p-8 rounded-[40px] space-y-8 sticky top-28">
+              <div className="flex items-center justify-between">
+                <h3 className="text-[11px] font-black text-slate-400 uppercase tracking-[0.2em]">Configuration</h3>
+                <Settings className="w-4 h-4 text-slate-300" />
+              </div>
+
+              <div className="space-y-6">
+                <div className="space-y-3">
+                  <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Profil Actif</label>
+                  <select 
+                    className="w-full bg-[var(--bg-primary)] border border-[var(--border-color)] rounded-2xl px-5 py-4 text-sm font-bold focus:ring-2 focus:ring-indigo-500 outline-none appearance-none cursor-pointer"
+                    value={activePreset || ''}
+                    onChange={(e) => {
+                      const p = presets.find(pr => pr.name === e.target.value);
+                      if (p) applyPreset(p);
+                      else setActivePreset(null);
+                    }}
+                  >
+                    <option value="">Analyse Prédictive IA</option>
+                    {presets.map(p => (
+                      <option key={p.id} value={p.name}>{p.name}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="space-y-3">
+                  <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Décodage</label>
+                  <select 
+                    className="w-full bg-[var(--bg-primary)] border border-[var(--border-color)] rounded-2xl px-5 py-4 text-sm font-bold focus:ring-2 focus:ring-indigo-500 outline-none"
+                    value={encOpt} 
+                    onChange={(e) => { setEncOpt(e.target.value); if (file) handleFile(file, e.target.value, sepOpt); }}
+                  >
+                    <option value="auto">Détection Auto</option>
+                    <option value="utf-8">UTF-8 Universal</option>
+                    <option value="iso-8859-1">Latin-1 (Sage Legacy)</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="pt-4">
+                <button 
+                  onClick={() => setStep(2)}
+                  disabled={!rawData}
+                  className="w-full bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-200 dark:disabled:bg-slate-800 disabled:text-slate-400 text-white rounded-[24px] py-5 flex items-center justify-center gap-3 font-black text-[13px] uppercase tracking-[0.2em] shadow-2xl shadow-indigo-600/30 transition-all hover:scale-[1.02] active:scale-100"
                 >
-                  <option value="">Automatique (IA)</option>
-                  {presets.map(p => (
-                    <option key={p.name} value={p.name}>{p.name}</option>
-                  ))}
-                </select>
-                <p className="text-[10px] text-slate-400 mt-2 italic font-serif">
-                  {activePreset ? `Le profil "${activePreset}" sera appliqué.` : "L'IA détectera les colonnes."}
-                </p>
+                  Configurer <ArrowRight className="w-5 h-5" />
+                </button>
               </div>
-
-              <div className="flex flex-col gap-1.5 bg-slate-50 p-4 rounded-xl border border-slate-200">
-                <div className="flex items-center gap-2 mb-1.5">
-                  <Lock className="w-4 h-4 text-slate-400" />
-                  <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Encodage</span>
-                </div>
-                <select className="w-full bg-white border border-slate-200 rounded-lg p-2 text-sm font-bold text-slate-700 outline-none" value={encOpt} onChange={(e) => { setEncOpt(e.target.value); if (file) handleFile(file, e.target.value, sepOpt); }}>
-                  <option value="auto">Détection automatique</option>
-                  <option value="utf-8">UTF-8</option>
-                  <option value="iso-8859-1">Latin-1 (ANSI)</option>
-                  <option value="utf-8-sig">UTF-8 BOM</option>
-                </select>
-              </div>
-              <div className="flex flex-col gap-1.5 bg-slate-50 p-4 rounded-xl border border-slate-200">
-                <div className="flex items-center gap-2 mb-1.5">
-                  <RefreshCw className="w-4 h-4 text-slate-400" />
-                  <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Séparateur</span>
-                </div>
-                <select className="w-full bg-white border border-slate-200 rounded-lg p-2 text-sm font-bold text-slate-700 outline-none" value={sepOpt} onChange={(e) => { setSepOpt(e.target.value); if (file) handleFile(file, encOpt, e.target.value); }}>
-                  <option value="auto">Détection automatique</option>
-                  <option value="\t">Tabulation</option>
-                  <option value=";">Point-virgule</option>
-                  <option value=",">Virgule</option>
-                  <option value="|">Pipe</option>
-                </select>
+              
+              <div className="flex items-center gap-3 text-[10px] font-bold text-slate-400 justify-center">
+                <Lock className="w-3 h-3" />
+                Infrastructure Certifiée Cloud us-west1
               </div>
             </div>
-            
-            {err && <div className="mt-4 p-3 bg-red-50 text-red-700 border-l-4 border-red-500 rounded-r-md flex items-center gap-2"><AlertCircle className="w-5 h-5 shrink-0" /> {err}</div>}
-            {warns.length > 0 && (
-              <div className="mt-4 space-y-2">
-                {warns.map((w, idx) => (
-                  <div key={idx} className="p-3 bg-amber-50 text-amber-700 border-l-4 border-amber-500 rounded-r-md flex items-start gap-2">
-                    <AlertTriangle className="w-5 h-5 shrink-0 mt-0.5" /> 
-                    <span className="text-sm whitespace-pre-wrap">{w}</span>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-          
-          <div className="flex justify-end">
-            <button 
-              className="flex items-center gap-2 bg-amber-600 hover:bg-amber-700 text-white px-5 py-2.5 rounded-lg font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-              disabled={!rawData || loading}
-              onClick={() => setStep(2)}
-            >
-              Suivant — Mapper les colonnes <ArrowRight className="w-4 h-4" />
-            </button>
-          </div>
+          </aside>
         </div>
       )}
 
@@ -1538,7 +1659,7 @@ export default function App() {
             
             {presets.length > 0 && (
               <div className="mb-8">
-                <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-3">Profils sauvegardés :</label>
+                <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-3">Profils Cloud :</label>
                 <div className="flex flex-wrap gap-3">
                   {presets.map((p, idx) => (
                     <div key={idx} className={`flex items-center rounded-xl overflow-hidden shadow-lg transition-all border ${activePreset === p.name ? 'border-indigo-500 ring-2 ring-indigo-500/20' : 'border-slate-700'}`}>
@@ -1549,9 +1670,9 @@ export default function App() {
                         {p.name}
                       </button>
                       <button 
-                        onClick={() => deletePreset(idx)}
+                        onClick={() => deleteFromCloud(p.id)}
                         className="px-3 py-2 bg-slate-800 text-slate-500 hover:text-red-400 hover:bg-red-500/10 transition-colors border-l border-slate-700"
-                        title="Supprimer"
+                        title="Supprimer du Cloud"
                       >
                         <Trash2 className="w-3.5 h-3.5" />
                       </button>
@@ -1561,38 +1682,45 @@ export default function App() {
                     onClick={() => setActivePreset(null)}
                     className={`px-4 py-2 text-xs font-black rounded-xl border transition-all ${!activePreset ? 'bg-slate-700 border-slate-600 text-white' : 'bg-transparent border-slate-700 text-slate-500 hover:text-slate-300'}`}
                   >
-                    Réinit. IA
+                    Auto-Détection
                   </button>
                 </div>
               </div>
             )}
 
             <div className="bg-slate-800/50 p-5 rounded-xl border border-slate-700/50">
-              <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-3">Enregistrer le profil actuel :</label>
+              <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-3">Synchroniser ce mapping au cloud :</label>
               <div className="flex gap-2">
                 <input 
                   type="text" 
-                  placeholder="Nom du profil (ex: Sage 1000, Pennylane...)" 
+                  placeholder="ID Unique (ex: Export Sage v2...)" 
                   className="flex-1 bg-slate-950 border border-slate-700 rounded-lg px-4 py-2 text-sm text-white placeholder:text-slate-600 focus:ring-2 focus:ring-indigo-500 outline-none font-medium"
                   value={newPresetName}
                   onChange={(e) => setNewPresetName(e.target.value)}
                 />
                 <button 
-                  onClick={savePreset}
+                  onClick={() => saveToCloud(newPresetName, mapping, amtFmt)}
                   disabled={!newPresetName.trim()}
                   className="bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white px-6 py-2 rounded-lg text-xs font-black uppercase tracking-widest transition-all shadow-lg active:scale-95 flex items-center gap-2"
                 >
                   <Save className="w-4 h-4" /> Sauvegarder
                 </button>
               </div>
-              <p className="text-[10px] text-slate-500 mt-3 italic font-serif opacity-60">
-                Sauvegarde les colonnes mappées et le format de montant détecté.
-              </p>
             </div>
           </div>
 
           <div className="bg-white border border-slate-200 rounded-xl p-6 mb-4 shadow-sm">
-            <h2 className="text-sm font-semibold text-slate-500 uppercase tracking-wider mb-4">② Mapping des colonnes</h2>
+            <h2 className="text-sm font-semibold text-slate-500 uppercase tracking-wider mb-4 flex items-center justify-between">
+              <span>② Mapping des colonnes</span>
+              <button 
+                onClick={handleAiMappingSuggestion}
+                disabled={isAiLoading}
+                className="flex items-center gap-2 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all border border-indigo-200/50"
+              >
+                {isAiLoading ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
+                Suggestion IA
+              </button>
+            </h2>
             <div className="p-3 bg-blue-50 text-blue-700 border-l-4 border-blue-500 rounded-r-md mb-6 text-sm">
               Les colonnes ont été pré-remplies automatiquement. Corrigez si nécessaire. <strong className="text-amber-600">★ = champ obligatoire</strong>
             </div>
@@ -1858,13 +1986,41 @@ export default function App() {
                         Des incohérences ont été détectées. Ces comptes seront exportés tels quels, mais une vérification est fortement recommandée.
                       </p>
                     </div>
-                    <button 
-                      onClick={exportAnomaliesCSV}
-                      className="flex items-center gap-2 bg-white text-red-700 hover:bg-red-50 px-4 py-2 rounded-xl text-xs font-black uppercase tracking-widest border border-red-200 transition-all shadow-sm shrink-0 active:scale-95"
-                    >
-                      <Download className="w-4 h-4" /> Exporter (.csv)
-                    </button>
+                    <div className="flex gap-2">
+                      <button 
+                        onClick={handleAiAnomalyAnalysis}
+                        disabled={isAiLoading}
+                        className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-xl text-xs font-black uppercase tracking-widest transition-all shadow-lg active:scale-95 disabled:opacity-50"
+                      >
+                        {isAiLoading ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
+                        Analyse IA
+                      </button>
+                      <button 
+                        onClick={exportAnomaliesCSV}
+                        className="flex items-center gap-2 bg-white text-red-700 hover:bg-red-50 px-4 py-2 rounded-xl text-xs font-black uppercase tracking-widest border border-red-200 transition-all shadow-sm shrink-0 active:scale-95"
+                      >
+                        <Download className="w-4 h-4" /> Exporter (.csv)
+                      </button>
+                    </div>
                   </div>
+
+                  {aiAnalysis && (
+                    <motion.div 
+                      initial={{ opacity: 0, height: 0 }}
+                      animate={{ opacity: 1, height: 'auto' }}
+                      className="mb-6 p-5 bg-indigo-900/5 dark:bg-indigo-400/5 border border-indigo-200 dark:border-indigo-800 rounded-2xl relative overflow-hidden"
+                    >
+                      <div className="absolute top-0 right-0 p-4 opacity-10">
+                        <Sparkles className="w-12 h-12 text-indigo-500" />
+                      </div>
+                      <h4 className="text-[10px] font-black text-indigo-600 dark:text-indigo-400 uppercase tracking-widest mb-3 flex items-center gap-2">
+                        Assistant IA Expert-Comptable
+                      </h4>
+                      <div className="text-xs text-indigo-900 dark:text-indigo-200 leading-relaxed font-medium whitespace-pre-wrap">
+                        {aiAnalysis}
+                      </div>
+                    </motion.div>
+                  )}
 
                   {/* Barre de Filtres */}
                   <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 mb-4">
@@ -2734,6 +2890,9 @@ export default function App() {
           </AnimatePresence>
         </div>
       )}
+          </div>
+        </div>
+      </main>
     </div>
   );
 }
