@@ -702,7 +702,7 @@ export default function App() {
   const [anomalySort, setAnomalySort] = useState<'asc' | 'desc'>('asc');
 
   // --- Presets de mapping ---
-  const [presets, setPresets] = useState<{ name: string, mapping: Record<string, string>, amtFmt: string }[]>([]);
+  const [presets, setPresets] = useState<{ id?: string, name: string, mapping: Record<string, string>, amtFmt: string }[]>([]);
   const [newPresetName, setNewPresetName] = useState('');
   const [activePreset, setActivePreset] = useState<string | null>(null);
 
@@ -1584,8 +1584,8 @@ export default function App() {
                     }}
                   >
                     <option value="">Analyse Prédictive IA</option>
-                    {presets.map(p => (
-                      <option key={p.id} value={p.name}>{p.name}</option>
+                    {presets.map((p, idx) => (
+                      <option key={p.id || `preset-${idx}`} value={p.name}>{p.name}</option>
                     ))}
                   </select>
                 </div>
@@ -1637,7 +1637,7 @@ export default function App() {
               </h3>
               <div className="flex flex-wrap gap-2 max-h-32 overflow-y-auto">
                 {batchFiles.map((f, i) => (
-                  <div key={i} className="flex items-center gap-2 bg-white border border-indigo-200 px-3 py-1.5 rounded-lg text-xs font-medium text-indigo-800 shadow-sm">
+                  <div key={`${f.name}-${i}`} className="flex items-center gap-2 bg-white border border-indigo-200 px-3 py-1.5 rounded-lg text-xs font-medium text-indigo-800 shadow-sm">
                     <FileText className="w-3.5 h-3.5 text-indigo-400" />
                     {f.name}
                   </div>
@@ -1662,7 +1662,7 @@ export default function App() {
                 <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-3">Profils Cloud :</label>
                 <div className="flex flex-wrap gap-3">
                   {presets.map((p, idx) => (
-                    <div key={idx} className={`flex items-center rounded-xl overflow-hidden shadow-lg transition-all border ${activePreset === p.name ? 'border-indigo-500 ring-2 ring-indigo-500/20' : 'border-slate-700'}`}>
+                    <div key={p.id || `preset-btn-${idx}`} className={`flex items-center rounded-xl overflow-hidden shadow-lg transition-all border ${activePreset === p.name ? 'border-indigo-500 ring-2 ring-indigo-500/20' : 'border-slate-700'}`}>
                       <button 
                         onClick={() => applyPreset(p)}
                         className={`px-4 py-2 text-xs font-black transition-colors ${activePreset === p.name ? 'bg-indigo-600 text-white' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'}`}
@@ -1740,7 +1740,7 @@ export default function App() {
                     }}
                   >
                     <option value="__ignore__">(ignorer)</option>
-                    {rawData.headers.map(h => <option key={h} value={h}>{h}</option>)}
+                    {rawData.headers.map((h, i) => <option key={`${h}-${i}`} value={h}>{h || '(vide)'}</option>)}
                   </select>
                 </div>
               ))}
@@ -1770,7 +1770,7 @@ export default function App() {
             {amtFmt && warns.length > 0 && (
               <div className="mt-4 space-y-2">
                 {warns.map((w, idx) => (
-                  <div key={idx} className="p-3 bg-amber-50 text-amber-700 border-l-4 border-amber-500 rounded-r-md flex items-start gap-2">
+                  <div key={`warn-${idx}-${w.substring(0, 20)}`} className="p-3 bg-amber-50 text-amber-700 border-l-4 border-amber-500 rounded-r-md flex items-start gap-2">
                     <AlertTriangle className="w-5 h-5 shrink-0 mt-0.5" /> 
                     <span className="text-sm whitespace-pre-wrap">{w}</span>
                   </div>
@@ -1835,7 +1835,7 @@ export default function App() {
                   </thead>
                   <tbody className="divide-y divide-slate-50">
                     {batchResults.map((res, i) => (
-                      <tr key={i} className="hover:bg-slate-50/50 transition-colors">
+                      <tr key={`${res.name}-${i}`} className="hover:bg-slate-50/50 transition-colors">
                         <td className="p-4 text-sm font-medium text-slate-700">{res.name}</td>
                         <td className="p-4 text-sm font-mono text-slate-600">{res.rows.toLocaleString()}</td>
                         <td className="p-4 text-sm font-mono text-slate-600">{fmt2(res.debit)} €</td>
@@ -2076,7 +2076,7 @@ export default function App() {
                         </h4>
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                           {filteredAnomalies.invalid.map((anomaly, idx) => (
-                            <div key={idx} className="bg-white p-3 rounded-xl border border-red-100 shadow-sm group hover:border-red-300 transition-all">
+                            <div key={`${anomaly.compte}-${idx}`} className="bg-white p-3 rounded-xl border border-red-100 shadow-sm group hover:border-red-300 transition-all">
                               <div className="flex items-center justify-between gap-2 mb-2">
                                 <span className="font-mono text-sm font-black text-slate-800 bg-red-50 px-2 py-1 rounded-lg border border-red-100">
                                   {anomaly.compte || '(vide)'}
@@ -2102,13 +2102,13 @@ export default function App() {
                         </h4>
                         <div className="space-y-3">
                           {filteredAnomalies.multiple.map((anomaly, idx) => (
-                            <div key={idx} className="bg-white p-4 rounded-2xl border border-red-100 shadow-sm hover:border-amber-300 transition-all">
+                            <div key={`${anomaly.compte}-${idx}`} className="bg-white p-4 rounded-2xl border border-red-100 shadow-sm hover:border-amber-300 transition-all">
                               <span className="font-mono text-xs font-black text-slate-800 bg-amber-50 px-3 py-1 rounded-lg border border-amber-100 mb-3 inline-block">
                                 Compte {anomaly.compte}
                               </span>
                               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
                                 {anomaly.variants.map((variant, i) => (
-                                  <div key={i} className="bg-slate-50 p-2.5 rounded-xl border border-slate-100">
+                                  <div key={`${variant.lib}-${i}`} className="bg-slate-50 p-2.5 rounded-xl border border-slate-100">
                                     <div className="font-bold text-slate-700 text-xs mb-1 line-clamp-1" title={variant.lib}>
                                       {variant.lib}
                                     </div>
@@ -2248,7 +2248,7 @@ export default function App() {
                     sortedTransformed
                       .slice(0, 50)
                       .map((r, i) => (
-                      <tr key={i} className="hover:bg-slate-50 preview-body-row">
+                      <tr key={`${r.EcritureNum}-${i}`} className="hover:bg-slate-50 preview-body-row">
                         {visibleColumns.map(c => (
                           <td key={c} className={`p-3 text-sm text-slate-700 truncate max-w-[200px] ${['Debit', 'Credit'].includes(c) ? 'font-mono text-right' : ''} preview-body-cell`}>
                             {['Debit', 'Credit'].includes(c) ? fmt2(r[c]) : r[c] || ''}
@@ -2608,7 +2608,7 @@ export default function App() {
                                   { t: 'Paramètres Conversion', d: 'Vérifiez les paramètres d\'encodage au chargement.' },
                                   { t: 'Solde Initial', d: 'Le solde à nouveau est-il inclus dans la balance ?' }
                                 ].map((step, i) => (
-                                  <li key={i} className="flex items-start gap-2 text-xs">
+                                  <li key={step.t} className="flex items-start gap-2 text-xs">
                                     <div className="w-1.5 h-1.5 rounded-full bg-red-400 mt-1.5 shrink-0" />
                                     <div>
                                       <span className="font-bold text-white">{step.t} :</span>{' '}
@@ -2789,7 +2789,7 @@ export default function App() {
                         }
 
                         return filtered.map((r, i) => (
-                          <div key={i} className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm hover:border-indigo-300 transition-colors group">
+                          <div key={`${r.CompteNum}-${r.EcritureDate}-${i}`} className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm hover:border-indigo-300 transition-colors group">
                             <div className="flex justify-between items-start mb-3">
                               <div className="space-y-1">
                                 <div className="flex items-center gap-2">
