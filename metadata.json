@@ -1,0 +1,5 @@
+{
+  "name": "FEC to Pennylane Converter",
+  "description": "Convert FEC files to Pennylane-compatible Excel files with custom formatting.",
+  "requestFramePermissions": []
+}
