@@ -1,20 +1,52 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
-</div>
+# FEC to Pennylane Converter — Version Django
 
-# Run and deploy your AI Studio app
+Ce projet a été adapté vers une base **Python Django**.
 
-This contains everything you need to run your app locally.
+## Démarrage rapide
 
-View your app in AI Studio: https://ai.studio/apps/2e7860ba-9b4c-4512-9117-3f8bfe866fea
+### 1) Prérequis
+- Python 3.11+
+- pip
 
-## Run Locally
+### 2) Installation
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+```
 
-**Prerequisites:**  Node.js
+### 3) Configuration
+Copier un fichier d'environnement si besoin :
+```bash
+cp .env.example .env
+```
+Variables utiles :
+- `DJANGO_SECRET_KEY`
+- `DEBUG` (True/False)
+- `ALLOWED_HOSTS` (ex: `127.0.0.1,localhost`)
 
+### 4) Initialiser la base
+```bash
+cd django_app
+python manage.py migrate
+```
 
-1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
-   `npm run dev`
+### 5) Lancer le serveur
+```bash
+python manage.py runserver
+```
+
+Application accessible sur :
+- http://127.0.0.1:8000/
+
+## Vérifications rapides
+```bash
+cd django_app
+python manage.py test
+python manage.py check
+```
+
+## Structure
+- `django_app/config/` : configuration Django
+- `django_app/core/` : application principale
+- `requirements.txt` : dépendances Python
