@@ -27,7 +27,7 @@
 }
 
 body {
-  @apply bg-[var(--bg-primary)] text-[var(--bg-primary)] font-sans antialiased transition-colors duration-200;
+  @apply bg-[var(--bg-primary)] text-[var(--text-primary)] font-sans antialiased transition-colors duration-200;
   color: var(--text-primary);
   background: var(--bg-primary);
 }
