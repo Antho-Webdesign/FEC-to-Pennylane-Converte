@@ -100,6 +100,13 @@ const PREDEFINED_THEMES = [
   { id: 'custom', name: 'Personnalisé', color: 'linear-gradient(to right, #6366f1, #10b981)' },
 ];
 
+const STEP_CONFIG = [
+  { id: 1, label: 'Importation Data', icon: FileSpreadsheet },
+  { id: 2, label: 'Configuration Mapping', icon: Layers },
+  { id: 3, label: 'Analyse & Export', icon: LayoutDashboard },
+  { id: 4, label: 'Réconciliation Balance', icon: Scale },
+] as const;
+
 // ============================================================================
 // FONCTIONS UTILITAIRES (Helpers)
 // ============================================================================
@@ -971,7 +978,8 @@ export default function App() {
   };
 
   // --- État du processus d'import/export ---
-  const [step, setStep] = useState<1 | 2 | 3 | 4>(1); // 1: Upload, 2: Mapping, 3: Preview, 4: Balance Check
+  type StepId = typeof STEP_CONFIG[number]['id'];
+  const [step, setStep] = useState<StepId>(1); // 1: Upload, 2: Mapping, 3: Preview, 4: Balance Check
   const [file, setFile] = useState<File | null>(null);
   const [fileName, setFileName] = useState('');
   const [rawData, setRawData] = useState<{ headers: string[], rows: any[], encoding: string, separator: string } | null>(null);
@@ -1856,6 +1864,12 @@ export default function App() {
     if (p.amtFmt.startsWith('C_')) setSignConv(p.amtFmt);
   };
 
+  const canNavigateToStep = (targetStep: StepId) => {
+    if (targetStep === 1) return true;
+    if (targetStep === 2) return !!rawData;
+    return transformed.length > 0;
+  };
+
   // ============================================================================
   // RENDU DU COMPOSANT
   // ============================================================================
@@ -1933,20 +1947,15 @@ export default function App() {
           </div>
           
           <nav className="space-y-2" aria-label="Navigation principale">
-            {[
-              { s: 1, l: 'Importation Data', i: FileSpreadsheet },
-              { s: 2, l: 'Configuration Mapping', i: Layers },
-              { s: 3, l: 'Analyse & Export', i: LayoutDashboard },
-              { s: 4, l: 'Réconciliation Balance', i: Scale },
-            ].map((item) => (
+            {STEP_CONFIG.map((item) => (
               <button 
-                key={item.s}
-                onClick={() => { if (item.s === 1 || (item.s === 2 && rawData) || (item.s === 3 && transformed.length > 0) || (item.s === 4 && transformed.length > 0)) setStep(item.s as any); }}
-                disabled={!(item.s === 1 || (item.s === 2 && rawData) || (item.s === 3 && transformed.length > 0) || (item.s === 4 && transformed.length > 0))}
-                aria-current={step === item.s ? 'step' : undefined}
-                className={`w-full flex items-center gap-3 px-4 py-3 rounded-2xl text-xs font-bold transition-all ${step === item.s ? 'bg-indigo-600 hover:bg-indigo-700 text-white shadow-lg shadow-indigo-600/20' : 'text-[var(--text-secondary)] hover:bg-slate-100 dark:hover:bg-slate-950 disabled:opacity-30'}`}
+                key={item.id}
+                onClick={() => { if (canNavigateToStep(item.id)) setStep(item.id); }}
+                disabled={!canNavigateToStep(item.id)}
+                aria-current={step === item.id ? 'step' : undefined}
+                className={`w-full flex items-center gap-3 px-4 py-3 rounded-2xl text-xs font-bold transition-all ${step === item.id ? 'bg-indigo-600 hover:bg-indigo-700 text-white shadow-lg shadow-indigo-600/20' : 'text-[var(--text-secondary)] hover:bg-slate-100 dark:hover:bg-slate-950 disabled:opacity-30'}`}
               >
-                <item.i className="w-4 h-4" aria-hidden="true" /> {item.l}
+                <item.icon className="w-4 h-4" aria-hidden="true" /> {item.label}
               </button>
             ))}
           </nav>
@@ -2001,6 +2010,27 @@ export default function App() {
             <div className="flex items-center gap-2">
               <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-2">Workspace</span>
               <span className="px-3 py-1 bg-indigo-50 dark:bg-indigo-900/20 text-indigo-600 dark:text-indigo-400 rounded-lg text-xs font-bold border border-indigo-100 dark:border-indigo-900/50">Production v2.5</span>
+            </div>
+            <div className="lg:hidden ml-2">
+              <label htmlFor="mobile-step-nav" className="sr-only">Aller à une étape</label>
+              <div className="relative">
+                <ChevronDown className="w-3.5 h-3.5 text-slate-500 absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none" />
+                <select
+                  id="mobile-step-nav"
+                  value={step}
+                  onChange={(e) => {
+                    const nextStep = Number(e.target.value) as StepId;
+                    if (canNavigateToStep(nextStep)) setStep(nextStep);
+                  }}
+                  className="appearance-none pr-7 pl-2 py-1.5 rounded-lg border border-[var(--border-color)] bg-[var(--bg-secondary)] text-xs font-semibold text-[var(--text-secondary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500"
+                >
+                  {STEP_CONFIG.map((item) => (
+                    <option key={item.id} value={item.id} disabled={!canNavigateToStep(item.id)}>
+                      Étape {item.id} · {item.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
             </div>
           </div>
           
@@ -2234,6 +2264,24 @@ export default function App() {
                 <h3 className="text-[11px] font-black text-slate-400 uppercase tracking-[0.2em]">Configuration</h3>
                 <Settings className="w-4 h-4 text-slate-300" />
               </div>
+
+              <section className="rounded-2xl border border-indigo-100 dark:border-indigo-900/40 bg-indigo-50/60 dark:bg-indigo-900/10 p-4">
+                <h4 className="text-[10px] font-black uppercase tracking-widest text-indigo-600 mb-3">Checklist import</h4>
+                <ul className="space-y-2">
+                  {[
+                    { done: !!fileName, label: 'Fichier sélectionné' },
+                    { done: !!rawData?.headers?.length, label: 'En-têtes détectés' },
+                    { done: (rawData?.rows?.length || 0) > 0, label: 'Lignes exploitables trouvées' },
+                  ].map((item) => (
+                    <li key={item.label} className="flex items-center gap-2 text-xs font-semibold">
+                      <span className={`w-5 h-5 rounded-full grid place-items-center ${item.done ? 'bg-emerald-500/20 text-emerald-600' : 'bg-slate-200 dark:bg-slate-800 text-slate-500'}`}>
+                        <Check className="w-3.5 h-3.5" aria-hidden="true" />
+                      </span>
+                      <span className={item.done ? 'text-emerald-700 dark:text-emerald-400' : 'text-[var(--text-secondary)]'}>{item.label}</span>
+                    </li>
+                  ))}
+                </ul>
+              </section>
 
               <div className="space-y-6">
                 <div className="space-y-3">
