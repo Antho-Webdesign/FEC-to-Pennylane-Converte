@@ -1,20 +1,77 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
-</div>
+# FEC to Pennylane Converter — Version Django
 
-# Run and deploy your AI Studio app
+Ce projet a été adapté vers une base **Python Django**.
 
-This contains everything you need to run your app locally.
+## Prompt — ce que fait l’application
 
-View your app in AI Studio: https://ai.studio/apps/2e7860ba-9b4c-4512-9117-3f8bfe866fea
+```text
+Tu es un assistant de conversion comptable.
 
-## Run Locally
+Contexte:
+- L’application sert de base Django pour le projet « FEC to Pennylane Converter ».
+- Elle fournit une interface web simple (page d’accueil) et une architecture serveur Python prête à évoluer.
 
-**Prerequisites:**  Node.js
+Objectif fonctionnel:
+- Accueillir l’utilisateur sur une page web Django.
+- Préparer le socle technique pour implémenter ensuite:
+  1) l’import de fichiers FEC,
+  2) la transformation des données,
+  3) l’export vers un format exploitable par Pennylane.
 
+Comportement attendu aujourd’hui:
+- La route `/` répond correctement et affiche un message de migration vers Django.
+- Le projet est exécutable localement avec les commandes Django standard.
 
-1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
-   `npm run dev`
+Contraintes:
+- Utiliser les variables d’environnement Django (`DJANGO_SECRET_KEY`, `DEBUG`, `ALLOWED_HOSTS`).
+- Conserver une structure simple et maintenable pour les prochaines évolutions métier.
+```
+
+## Démarrage rapide
+
+### 1) Prérequis
+- Python 3.11+
+- pip
+
+### 2) Installation
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+```
+
+### 3) Configuration
+Copier un fichier d'environnement si besoin :
+```bash
+cp .env.example .env
+```
+Variables utiles :
+- `DJANGO_SECRET_KEY`
+- `DEBUG` (True/False)
+- `ALLOWED_HOSTS` (ex: `127.0.0.1,localhost`)
+
+### 4) Initialiser la base
+```bash
+cd django_app
+python manage.py migrate
+```
+
+### 5) Lancer le serveur
+```bash
+python manage.py runserver
+```
+
+Application accessible sur :
+- http://127.0.0.1:8000/
+
+## Vérifications rapides
+```bash
+cd django_app
+python manage.py test
+python manage.py check
+```
+
+## Structure
+- `django_app/config/` : configuration Django
+- `django_app/core/` : application principale
+- `requirements.txt` : dépendances Python
