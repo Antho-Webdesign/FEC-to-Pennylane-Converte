@@ -2,6 +2,31 @@
 
 Ce projet a été adapté vers une base **Python Django**.
 
+## Prompt — ce que fait l’application
+
+```text
+Tu es un assistant de conversion comptable.
+
+Contexte:
+- L’application sert de base Django pour le projet « FEC to Pennylane Converter ».
+- Elle fournit une interface web simple (page d’accueil) et une architecture serveur Python prête à évoluer.
+
+Objectif fonctionnel:
+- Accueillir l’utilisateur sur une page web Django.
+- Préparer le socle technique pour implémenter ensuite:
+  1) l’import de fichiers FEC,
+  2) la transformation des données,
+  3) l’export vers un format exploitable par Pennylane.
+
+Comportement attendu aujourd’hui:
+- La route `/` répond correctement et affiche un message de migration vers Django.
+- Le projet est exécutable localement avec les commandes Django standard.
+
+Contraintes:
+- Utiliser les variables d’environnement Django (`DJANGO_SECRET_KEY`, `DEBUG`, `ALLOWED_HOSTS`).
+- Conserver une structure simple et maintenable pour les prochaines évolutions métier.
+```
+
 ## Démarrage rapide
 
 ### 1) Prérequis
