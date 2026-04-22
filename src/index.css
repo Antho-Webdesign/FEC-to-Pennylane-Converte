@@ -32,6 +32,15 @@ body {
   background: var(--bg-primary);
 }
 
+::selection {
+  background: color-mix(in srgb, var(--accent-primary) 25%, transparent);
+}
+
+:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent-primary) 70%, white);
+  outline-offset: 2px;
+}
+
 /* Glass effect for panels */
 .glass-panel {
   @apply bg-[var(--bg-secondary)] border border-[var(--border-color)] shadow-sm;
@@ -95,4 +104,13 @@ body {
 @keyframes slideUp {
   from { transform: translateY(10px); opacity: 0; }
   to { transform: translateY(0); opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }
